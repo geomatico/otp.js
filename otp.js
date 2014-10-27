@@ -1,45 +1,48 @@
+
 ;(function(){
 
 /**
- * Require the given path.
+ * Require the module at `name`.
  *
- * @param {String} path
+ * @param {String} name
  * @return {Object} exports
  * @api public
  */
 
-function require(path, parent, orig) {
-  var resolved = require.resolve(path);
+function require(name) {
+  var module = require.modules[name];
+  if (!module) throw new Error('failed to require "' + name + '"');
 
-  // lookup failed
-  if (null == resolved) {
-    orig = orig || path;
-    parent = parent || 'root';
-    var err = new Error('Failed to require "' + orig + '" from "' + parent + '"');
-    err.path = orig;
-    err.parent = parent;
-    err.require = true;
-    throw err;
-  }
-
-  var module = require.modules[resolved];
-
-  // perform real require()
-  // by invoking the module's
-  // registered function
-  if (!module._resolving && !module.exports) {
-    var mod = {};
-    mod.exports = {};
-    mod.client = mod.component = true;
-    module._resolving = true;
-    module.call(this, mod.exports, require.relative(resolved), mod);
-    delete module._resolving;
-    module.exports = mod.exports;
+  if (!('exports' in module) && typeof module.definition === 'function') {
+    module.client = module.component = true;
+    module.definition.call(this, module.exports = {}, module);
+    delete module.definition;
   }
 
   return module.exports;
 }
 
+/**
+ * Meta info, accessible in the global scope unless you use AMD option.
+ */
+
+require.loader = 'component';
+
+/**
+ * Find and require a module which name starts with the provided name.
+ * If multiple modules exists, the highest semver is used. 
+ * This function should be used for remote dependencies.
+ */
+
+require.latest = function (name) {
+  var available = Object.keys(require.modules).filter(function(moduleName) {
+    return moduleName.indexOf(name) !== -1
+  });
+  if (available.length === 0) {
+    throw new Error('failed to find latest module of "' + name + '"');
+  }
+  return require(available.sort().pop());
+}
 /**
  * Registered modules.
  */
@@ -47,161 +50,34 @@ function require(path, parent, orig) {
 require.modules = {};
 
 /**
- * Registered aliases.
- */
-
-require.aliases = {};
-
-/**
- * Resolve `path`.
+ * Register module at `name` with callback `definition`.
  *
- * Lookup:
- *
- *   - PATH/index.js
- *   - PATH.js
- *   - PATH
- *
- * @param {String} path
- * @return {String} path or null
- * @api private
- */
-
-require.resolve = function(path) {
-  if (path.charAt(0) === '/') path = path.slice(1);
-
-  var paths = [
-    path,
-    path + '.js',
-    path + '.json',
-    path + '/index.js',
-    path + '/index.json'
-  ];
-
-  for (var i = 0; i < paths.length; i++) {
-    var path = paths[i];
-    if (require.modules.hasOwnProperty(path)) return path;
-    if (require.aliases.hasOwnProperty(path)) return require.aliases[path];
-  }
-};
-
-/**
- * Normalize `path` relative to the current path.
- *
- * @param {String} curr
- * @param {String} path
- * @return {String}
- * @api private
- */
-
-require.normalize = function(curr, path) {
-  var segs = [];
-
-  if ('.' != path.charAt(0)) return path;
-
-  curr = curr.split('/');
-  path = path.split('/');
-
-  for (var i = 0; i < path.length; ++i) {
-    if ('..' == path[i]) {
-      curr.pop();
-    } else if ('.' != path[i] && '' != path[i]) {
-      segs.push(path[i]);
-    }
-  }
-
-  return curr.concat(segs).join('/');
-};
-
-/**
- * Register module at `path` with callback `definition`.
- *
- * @param {String} path
+ * @param {String} name
  * @param {Function} definition
  * @api private
  */
 
-require.register = function(path, definition) {
-  require.modules[path] = definition;
+require.register = function (name, definition) {
+  require.modules[name] = {
+    definition: definition
+  };
 };
 
 /**
- * Alias a module definition.
+ * Define a module's exports immediately with `exports`.
  *
- * @param {String} from
- * @param {String} to
+ * @param {String} name
+ * @param {Generic} exports
  * @api private
  */
 
-require.alias = function(from, to) {
-  if (!require.modules.hasOwnProperty(from)) {
-    throw new Error('Failed to alias "' + from + '", it does not exist');
-  }
-  require.aliases[to] = from;
-};
-
-/**
- * Return a require function relative to the `parent` path.
- *
- * @param {String} parent
- * @return {Function}
- * @api private
- */
-
-require.relative = function(parent) {
-  var p = require.normalize(parent, '..');
-
-  /**
-   * lastIndexOf helper.
-   */
-
-  function lastIndexOf(arr, obj) {
-    var i = arr.length;
-    while (i--) {
-      if (arr[i] === obj) return i;
-    }
-    return -1;
-  }
-
-  /**
-   * The relative require() itself.
-   */
-
-  function localRequire(path) {
-    var resolved = localRequire.resolve(path);
-    return require(resolved, parent, path);
-  }
-
-  /**
-   * Resolve relative to the parent.
-   */
-
-  localRequire.resolve = function(path) {
-    var c = path.charAt(0);
-    if ('/' == c) return path.slice(1);
-    if ('.' == c) return require.normalize(p, path);
-
-    // resolve deps by returning
-    // the dep in the nearest "deps"
-    // directory
-    var segs = parent.split('/');
-    var i = lastIndexOf(segs, 'deps') + 1;
-    if (!i) i = 0;
-    path = segs.slice(0, i + 1).join('/') + '/deps/' + path;
-    return path;
+require.define = function (name, exports) {
+  require.modules[name] = {
+    exports: exports
   };
-
-  /**
-   * Check if module is defined at `path`.
-   */
-
-  localRequire.exists = function(path) {
-    return require.modules.hasOwnProperty(localRequire.resolve(path));
-  };
-
-  return localRequire;
 };
-require.register("jashkenas-underscore/underscore.js", function(exports, require, module){
-//     Underscore.js 1.6.0
+require.register("jashkenas~underscore@1.7.0", function (exports, module) {
+//     Underscore.js 1.7.0
 //     http://underscorejs.org
 //     (c) 2009-2014 Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
 //     Underscore may be freely distributed under the MIT license.
@@ -216,9 +92,6 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
 
   // Save the previous value of the `_` variable.
   var previousUnderscore = root._;
-
-  // Establish the object that gets returned to break out of a loop iteration.
-  var breaker = {};
 
   // Save bytes in the minified (but not gzipped) version:
   var ArrayProto = Array.prototype, ObjProto = Object.prototype, FuncProto = Function.prototype;
@@ -247,8 +120,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
 
   // Export the Underscore object for **Node.js**, with
   // backwards-compatibility for the old `require()` API. If we're in
-  // the browser, add `_` as a global object via a string identifier,
-  // for Closure Compiler "advanced" mode.
+  // the browser, add `_` as a global object.
   if (typeof exports !== 'undefined') {
     if (typeof module !== 'undefined' && module.exports) {
       exports = module.exports = _;
@@ -259,9 +131,11 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   }
 
   // Current version.
-  _.VERSION = '1.6.0';
+  _.VERSION = '1.7.0';
 
-  // Internal function: creates a callback bound to its context if supplied
+  // Internal function that returns an efficient (for current engines) version
+  // of the passed-in callback, to be repeatedly applied in other Underscore
+  // functions.
   var createCallback = function(func, context, argCount) {
     if (context === void 0) return func;
     switch (argCount == null ? 3 : argCount) {
@@ -283,8 +157,10 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     };
   };
 
-  // An internal function to generate lookup iterators.
-  var lookupIterator = function(value, context, argCount) {
+  // A mostly-internal function to generate callbacks that can be applied
+  // to each element in a collection, returning the desired result — either
+  // identity, an arbitrary callback, a property matcher, or a property accessor.
+  _.iteratee = function(value, context, argCount) {
     if (value == null) return _.identity;
     if (_.isFunction(value)) return createCallback(value, context, argCount);
     if (_.isObject(value)) return _.matches(value);
@@ -297,37 +173,34 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   // The cornerstone, an `each` implementation, aka `forEach`.
   // Handles raw objects in addition to array-likes. Treats all
   // sparse array-likes as if they were dense.
-  _.each = _.forEach = function(obj, iterator, context) {
-    var i, length;
+  _.each = _.forEach = function(obj, iteratee, context) {
     if (obj == null) return obj;
-    iterator = createCallback(iterator, context);
-    if (obj.length === +obj.length) {
-      for (i = 0, length = obj.length; i < length; i++) {
-        if (iterator(obj[i], i, obj) === breaker) break;
+    iteratee = createCallback(iteratee, context);
+    var i, length = obj.length;
+    if (length === +length) {
+      for (i = 0; i < length; i++) {
+        iteratee(obj[i], i, obj);
       }
     } else {
       var keys = _.keys(obj);
       for (i = 0, length = keys.length; i < length; i++) {
-        if (iterator(obj[keys[i]], keys[i], obj) === breaker) break;
+        iteratee(obj[keys[i]], keys[i], obj);
       }
     }
     return obj;
   };
 
-  // Return the results of applying the iterator to each element.
-  _.map = _.collect = function(obj, iterator, context) {
+  // Return the results of applying the iteratee to each element.
+  _.map = _.collect = function(obj, iteratee, context) {
     if (obj == null) return [];
-    iterator = lookupIterator(iterator, context);
-    var length = obj.length,
-        currentKey, keys;
-    if (length !== +length) {
-      keys = _.keys(obj);
-      length = keys.length;
-    }
-    var results = Array(length);
+    iteratee = _.iteratee(iteratee, context);
+    var keys = obj.length !== +obj.length && _.keys(obj),
+        length = (keys || obj).length,
+        results = Array(length),
+        currentKey;
     for (var index = 0; index < length; index++) {
       currentKey = keys ? keys[index] : index;
-      results[index] = iterator(obj[currentKey], currentKey, obj);
+      results[index] = iteratee(obj[currentKey], currentKey, obj);
     }
     return results;
   };
@@ -336,49 +209,45 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
 
   // **Reduce** builds up a single result from a list of values, aka `inject`,
   // or `foldl`.
-  _.reduce = _.foldl = _.inject = function(obj, iterator, memo, context) {
-    var initial = arguments.length > 2;
+  _.reduce = _.foldl = _.inject = function(obj, iteratee, memo, context) {
     if (obj == null) obj = [];
-    iterator = createCallback(iterator, context, 4);
-    _.each(obj, function(value, index, list) {
-      if (!initial) {
-        memo = value;
-        initial = true;
-      } else {
-        memo = iterator(memo, value, index, list);
-      }
-    });
-    if (!initial) throw TypeError(reduceError);
+    iteratee = createCallback(iteratee, context, 4);
+    var keys = obj.length !== +obj.length && _.keys(obj),
+        length = (keys || obj).length,
+        index = 0, currentKey;
+    if (arguments.length < 3) {
+      if (!length) throw new TypeError(reduceError);
+      memo = obj[keys ? keys[index++] : index++];
+    }
+    for (; index < length; index++) {
+      currentKey = keys ? keys[index] : index;
+      memo = iteratee(memo, obj[currentKey], currentKey, obj);
+    }
     return memo;
   };
 
   // The right-associative version of reduce, also known as `foldr`.
-  _.reduceRight = _.foldr = function(obj, iterator, memo, context) {
-    var initial = arguments.length > 2;
+  _.reduceRight = _.foldr = function(obj, iteratee, memo, context) {
     if (obj == null) obj = [];
-    var length = obj.length;
-    iterator = createCallback(iterator, context, 4);
-    if (length !== +length) {
-      var keys = _.keys(obj);
-      length = keys.length;
+    iteratee = createCallback(iteratee, context, 4);
+    var keys = obj.length !== + obj.length && _.keys(obj),
+        index = (keys || obj).length,
+        currentKey;
+    if (arguments.length < 3) {
+      if (!index) throw new TypeError(reduceError);
+      memo = obj[keys ? keys[--index] : --index];
     }
-    _.each(obj, function(value, index, list) {
-      index = keys ? keys[--length] : --length;
-      if (!initial) {
-        memo = obj[index];
-        initial = true;
-      } else {
-        memo = iterator(memo, obj[index], index, list);
-      }
-    });
-    if (!initial) throw TypeError(reduceError);
+    while (index--) {
+      currentKey = keys ? keys[index] : index;
+      memo = iteratee(memo, obj[currentKey], currentKey, obj);
+    }
     return memo;
   };
 
   // Return the first value which passes a truth test. Aliased as `detect`.
   _.find = _.detect = function(obj, predicate, context) {
     var result;
-    predicate = lookupIterator(predicate, context);
+    predicate = _.iteratee(predicate, context);
     _.some(obj, function(value, index, list) {
       if (predicate(value, index, list)) {
         result = value;
@@ -393,7 +262,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   _.filter = _.select = function(obj, predicate, context) {
     var results = [];
     if (obj == null) return results;
-    predicate = lookupIterator(predicate, context);
+    predicate = _.iteratee(predicate, context);
     _.each(obj, function(value, index, list) {
       if (predicate(value, index, list)) results.push(value);
     });
@@ -402,33 +271,37 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
 
   // Return all the elements for which a truth test fails.
   _.reject = function(obj, predicate, context) {
-    return _.filter(obj, _.negate(lookupIterator(predicate)), context);
+    return _.filter(obj, _.negate(_.iteratee(predicate)), context);
   };
 
   // Determine whether all of the elements match a truth test.
   // Aliased as `all`.
   _.every = _.all = function(obj, predicate, context) {
-    var result = true;
-    if (obj == null) return result;
-    predicate = lookupIterator(predicate, context);
-    _.each(obj, function(value, index, list) {
-      result = predicate(value, index, list);
-      if (!result) return breaker;
-    });
-    return !!result;
+    if (obj == null) return true;
+    predicate = _.iteratee(predicate, context);
+    var keys = obj.length !== +obj.length && _.keys(obj),
+        length = (keys || obj).length,
+        index, currentKey;
+    for (index = 0; index < length; index++) {
+      currentKey = keys ? keys[index] : index;
+      if (!predicate(obj[currentKey], currentKey, obj)) return false;
+    }
+    return true;
   };
 
   // Determine if at least one element in the object matches a truth test.
   // Aliased as `any`.
   _.some = _.any = function(obj, predicate, context) {
-    var result = false;
-    if (obj == null) return result;
-    predicate = lookupIterator(predicate, context);
-    _.each(obj, function(value, index, list) {
-      result = predicate(value, index, list);
-      if (result) return breaker;
-    });
-    return !!result;
+    if (obj == null) return false;
+    predicate = _.iteratee(predicate, context);
+    var keys = obj.length !== +obj.length && _.keys(obj),
+        length = (keys || obj).length,
+        index, currentKey;
+    for (index = 0; index < length; index++) {
+      currentKey = keys ? keys[index] : index;
+      if (predicate(obj[currentKey], currentKey, obj)) return true;
+    }
+    return false;
   };
 
   // Determine if the array or object contains a given value (using `===`).
@@ -466,10 +339,11 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   };
 
   // Return the maximum element (or element-based computation).
-  _.max = function(obj, iterator, context) {
+  _.max = function(obj, iteratee, context) {
     var result = -Infinity, lastComputed = -Infinity,
         value, computed;
-    if (!iterator && _.isArray(obj)) {
+    if (iteratee == null && obj != null) {
+      obj = obj.length === +obj.length ? obj : _.values(obj);
       for (var i = 0, length = obj.length; i < length; i++) {
         value = obj[i];
         if (value > result) {
@@ -477,9 +351,9 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
         }
       }
     } else {
-      iterator = lookupIterator(iterator, context);
+      iteratee = _.iteratee(iteratee, context);
       _.each(obj, function(value, index, list) {
-        computed = iterator(value, index, list);
+        computed = iteratee(value, index, list);
         if (computed > lastComputed || computed === -Infinity && result === -Infinity) {
           result = value;
           lastComputed = computed;
@@ -490,10 +364,11 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   };
 
   // Return the minimum element (or element-based computation).
-  _.min = function(obj, iterator, context) {
+  _.min = function(obj, iteratee, context) {
     var result = Infinity, lastComputed = Infinity,
         value, computed;
-    if (!iterator && _.isArray(obj)) {
+    if (iteratee == null && obj != null) {
+      obj = obj.length === +obj.length ? obj : _.values(obj);
       for (var i = 0, length = obj.length; i < length; i++) {
         value = obj[i];
         if (value < result) {
@@ -501,9 +376,9 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
         }
       }
     } else {
-      iterator = lookupIterator(iterator, context);
+      iteratee = _.iteratee(iteratee, context);
       _.each(obj, function(value, index, list) {
-        computed = iterator(value, index, list);
+        computed = iteratee(value, index, list);
         if (computed < lastComputed || computed === Infinity && result === Infinity) {
           result = value;
           lastComputed = computed;
@@ -513,17 +388,17 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     return result;
   };
 
-  // Shuffle an array, using the modern version of the
+  // Shuffle a collection, using the modern version of the
   // [Fisher-Yates shuffle](http://en.wikipedia.org/wiki/Fisher–Yates_shuffle).
   _.shuffle = function(obj) {
-    var rand;
-    var index = 0;
-    var shuffled = [];
-    _.each(obj, function(value) {
-      rand = _.random(index++);
-      shuffled[index - 1] = shuffled[rand];
-      shuffled[rand] = value;
-    });
+    var set = obj && obj.length === +obj.length ? obj : _.values(obj);
+    var length = set.length;
+    var shuffled = Array(length);
+    for (var index = 0, rand; index < length; index++) {
+      rand = _.random(0, index);
+      if (rand !== index) shuffled[index] = shuffled[rand];
+      shuffled[rand] = set[index];
+    }
     return shuffled;
   };
 
@@ -538,14 +413,14 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     return _.shuffle(obj).slice(0, Math.max(0, n));
   };
 
-  // Sort the object's values by a criterion produced by an iterator.
-  _.sortBy = function(obj, iterator, context) {
-    iterator = lookupIterator(iterator, context);
+  // Sort the object's values by a criterion produced by an iteratee.
+  _.sortBy = function(obj, iteratee, context) {
+    iteratee = _.iteratee(iteratee, context);
     return _.pluck(_.map(obj, function(value, index, list) {
       return {
         value: value,
         index: index,
-        criteria: iterator(value, index, list)
+        criteria: iteratee(value, index, list)
       };
     }).sort(function(left, right) {
       var a = left.criteria;
@@ -560,11 +435,11 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
 
   // An internal function used for aggregate "group by" operations.
   var group = function(behavior) {
-    return function(obj, iterator, context) {
+    return function(obj, iteratee, context) {
       var result = {};
-      iterator = lookupIterator(iterator, context);
+      iteratee = _.iteratee(iteratee, context);
       _.each(obj, function(value, index) {
-        var key = iterator(value, index, obj);
+        var key = iteratee(value, index, obj);
         behavior(result, value, key);
       });
       return result;
@@ -592,13 +467,13 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
 
   // Use a comparator function to figure out the smallest index at which
   // an object should be inserted so as to maintain order. Uses binary search.
-  _.sortedIndex = function(array, obj, iterator, context) {
-    iterator = lookupIterator(iterator, context, 1);
-    var value = iterator(obj);
+  _.sortedIndex = function(array, obj, iteratee, context) {
+    iteratee = _.iteratee(iteratee, context, 1);
+    var value = iteratee(obj);
     var low = 0, high = array.length;
     while (low < high) {
-      var mid = (low + high) >>> 1;
-      if (iterator(array[mid]) < value) low = mid + 1; else high = mid;
+      var mid = low + high >>> 1;
+      if (iteratee(array[mid]) < value) low = mid + 1; else high = mid;
     }
     return low;
   };
@@ -620,7 +495,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   // Split a collection into two arrays: one whose elements all satisfy the given
   // predicate, and one whose elements all do not satisfy the predicate.
   _.partition = function(obj, predicate, context) {
-    predicate = lookupIterator(predicate, context);
+    predicate = _.iteratee(predicate, context);
     var pass = [], fail = [];
     _.each(obj, function(value, key, obj) {
       (predicate(value, key, obj) ? pass : fail).push(value);
@@ -701,23 +576,29 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   // Produce a duplicate-free version of the array. If the array has already
   // been sorted, you have the option of using a faster algorithm.
   // Aliased as `unique`.
-  _.uniq = _.unique = function(array, isSorted, iterator, context) {
+  _.uniq = _.unique = function(array, isSorted, iteratee, context) {
     if (array == null) return [];
-    if (_.isFunction(isSorted)) {
-      context = iterator;
-      iterator = isSorted;
+    if (!_.isBoolean(isSorted)) {
+      context = iteratee;
+      iteratee = isSorted;
       isSorted = false;
     }
-    if (iterator) iterator = lookupIterator(iterator, context);
+    if (iteratee != null) iteratee = _.iteratee(iteratee, context);
     var result = [];
     var seen = [];
     for (var i = 0, length = array.length; i < length; i++) {
       var value = array[i];
-      if (iterator) value = iterator(value, i, array);
-      if (isSorted ? !i || seen !== value : !_.contains(seen, value)) {
-        if (isSorted) seen = value;
-        else seen.push(value);
-        result.push(array[i]);
+      if (isSorted) {
+        if (!i || seen !== value) result.push(value);
+        seen = value;
+      } else if (iteratee) {
+        var computed = iteratee(value, i, array);
+        if (_.indexOf(seen, computed) < 0) {
+          seen.push(computed);
+          result.push(value);
+        }
+      } else if (_.indexOf(result, value) < 0) {
+        result.push(value);
       }
     }
     return result;
@@ -820,15 +701,13 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
       stop = start || 0;
       start = 0;
     }
-    step = arguments[2] || 1;
+    step = step || 1;
 
     var length = Math.max(Math.ceil((stop - start) / step), 0);
-    var idx = 0;
     var range = Array(length);
 
-    while (idx < length) {
-      range[idx++] = start;
-      start += step;
+    for (var idx = 0; idx < length; idx++, start += step) {
+      range[idx] = start;
     }
 
     return range;
@@ -846,7 +725,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   _.bind = function(func, context) {
     var args, bound;
     if (nativeBind && func.bind === nativeBind) return nativeBind.apply(func, slice.call(arguments, 1));
-    if (!_.isFunction(func)) throw TypeError('Bind must be called on a function');
+    if (!_.isFunction(func)) throw new TypeError('Bind must be called on a function');
     args = slice.call(arguments, 2);
     bound = function() {
       if (!(this instanceof bound)) return func.apply(context, args.concat(slice.call(arguments)));
@@ -854,7 +733,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
       var self = new Ctor;
       Ctor.prototype = null;
       var result = func.apply(self, args.concat(slice.call(arguments)));
-      if (Object(result) === result) return result;
+      if (_.isObject(result)) return result;
       return self;
     };
     return bound;
@@ -880,9 +759,9 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   // are the method names to be bound. Useful for ensuring that all callbacks
   // defined on an object belong to it.
   _.bindAll = function(obj) {
-    var i = 1, length = arguments.length, key;
-    if (length <= 1) throw Error('bindAll must be passed function names');
-    for (; i < length; i++) {
+    var i, length = arguments.length, key;
+    if (length <= 1) throw new Error('bindAll must be passed function names');
+    for (i = 1; i < length; i++) {
       key = arguments[i];
       obj[key] = _.bind(obj[key], obj);
     }
@@ -895,7 +774,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
       var cache = memoize.cache;
       var address = hasher ? hasher.apply(this, arguments) : key;
       if (!_.has(cache, address)) cache[address] = func.apply(this, arguments);
-      return cache[key];
+      return cache[address];
     };
     memoize.cache = {};
     return memoize;
@@ -987,19 +866,6 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     };
   };
 
-  // Returns a function that will be executed at most one time, no matter how
-  // often you call it. Useful for lazy initialization.
-  _.once = function(func) {
-    var ran = false, memo;
-    return function() {
-      if (ran) return memo;
-      ran = true;
-      memo = func.apply(this, arguments);
-      func = null;
-      return memo;
-    };
-  };
-
   // Returns the first function passed as an argument to the second,
   // allowing you to adjust arguments, run code before and after, and
   // conditionally execute the original function.
@@ -1035,6 +901,23 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
       }
     };
   };
+
+  // Returns a function that will only be executed before being called N times.
+  _.before = function(times, func) {
+    var memo;
+    return function() {
+      if (--times > 0) {
+        memo = func.apply(this, arguments);
+      } else {
+        func = null;
+      }
+      return memo;
+    };
+  };
+
+  // Returns a function that will be executed at most one time, no matter how
+  // often you call it. Useful for lazy initialization.
+  _.once = _.partial(_.before, 2);
 
   // Object Functions
   // ----------------
@@ -1098,25 +981,27 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     for (var i = 1, length = arguments.length; i < length; i++) {
       source = arguments[i];
       for (prop in source) {
-        obj[prop] = source[prop];
+        if (hasOwnProperty.call(source, prop)) {
+            obj[prop] = source[prop];
+        }
       }
     }
     return obj;
   };
 
   // Return a copy of the object only containing the whitelisted properties.
-  _.pick = function(obj, iterator, context) {
+  _.pick = function(obj, iteratee, context) {
     var result = {}, key;
     if (obj == null) return result;
-    if (_.isFunction(iterator)) {
-      iterator = createCallback(iterator, context);
+    if (_.isFunction(iteratee)) {
+      iteratee = createCallback(iteratee, context);
       for (key in obj) {
         var value = obj[key];
-        if (iterator(value, key, obj)) result[key] = value;
+        if (iteratee(value, key, obj)) result[key] = value;
       }
     } else {
       var keys = concat.apply([], slice.call(arguments, 1));
-      obj = Object(obj);
+      obj = new Object(obj);
       for (var i = 0, length = keys.length; i < length; i++) {
         key = keys[i];
         if (key in obj) result[key] = obj[key];
@@ -1126,16 +1011,16 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   };
 
    // Return a copy of the object without the blacklisted properties.
-  _.omit = function(obj, iterator, context) {
-    if (_.isFunction(iterator)) {
-      iterator = _.negate(iterator);
+  _.omit = function(obj, iteratee, context) {
+    if (_.isFunction(iteratee)) {
+      iteratee = _.negate(iteratee);
     } else {
       var keys = _.map(concat.apply([], slice.call(arguments, 1)), String);
-      iterator = function(value, key) {
+      iteratee = function(value, key) {
         return !_.contains(keys, key);
       };
     }
-    return _.pick(obj, iterator, context);
+    return _.pick(obj, iteratee, context);
   };
 
   // Fill in a given object with default properties.
@@ -1188,9 +1073,9 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
       case '[object Number]':
         // `NaN`s are equivalent, but non-reflexive.
         // Object(NaN) is equivalent to NaN
-        if (a != +a) return b != +b;
+        if (+a !== +a) return +b !== +b;
         // An `egal` comparison is performed for other numeric values.
-        return a == 0 ? 1 / a == 1 / b : a == +b;
+        return +a === 0 ? 1 / +a === 1 / b : +a === +b;
       case '[object Date]':
       case '[object Boolean]':
         // Coerce dates and booleans to numeric primitive values. Dates are compared by their
@@ -1239,7 +1124,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
       var keys = _.keys(a), key;
       size = keys.length;
       // Ensure that both objects contain the same number of properties before comparing deep equality.
-      result = _.keys(b).length == size;
+      result = _.keys(b).length === size;
       if (result) {
         while (size--) {
           // Deep compare each member
@@ -1281,7 +1166,8 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
 
   // Is a given variable an object?
   _.isObject = function(obj) {
-    return obj === Object(obj);
+    var type = typeof obj;
+    return type === 'function' || type === 'object' && !!obj;
   };
 
   // Add some isType methods: isArguments, isFunction, isString, isNumber, isDate, isRegExp.
@@ -1299,10 +1185,10 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     };
   }
 
-  // Optimize `isFunction` if appropriate.
+  // Optimize `isFunction` if appropriate. Work around an IE 11 bug.
   if (typeof /./ !== 'function') {
     _.isFunction = function(obj) {
-      return typeof obj === 'function';
+      return typeof obj == 'function' || false;
     };
   }
 
@@ -1347,7 +1233,7 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     return this;
   };
 
-  // Keep the identity function around for default iterators.
+  // Keep the identity function around for default iteratees.
   _.identity = function(value) {
     return value;
   };
@@ -1368,19 +1254,23 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
 
   // Returns a predicate for checking whether an object has a given set of `key:value` pairs.
   _.matches = function(attrs) {
+    var pairs = _.pairs(attrs), length = pairs.length;
     return function(obj) {
-      if (obj == null) return _.isEmpty(attrs);
-      if (obj === attrs) return true;
-      for (var key in attrs) if (attrs[key] !== obj[key]) return false;
+      if (obj == null) return !length;
+      obj = new Object(obj);
+      for (var i = 0; i < length; i++) {
+        var pair = pairs[i], key = pair[0];
+        if (pair[1] !== obj[key] || !(key in obj)) return false;
+      }
       return true;
     };
   };
 
   // Run a function **n** times.
-  _.times = function(n, iterator, context) {
+  _.times = function(n, iteratee, context) {
     var accum = Array(Math.max(0, n));
-    iterator = createCallback(iterator, context, 1);
-    for (var i = 0; i < n; i++) accum[i] = iterator(i);
+    iteratee = createCallback(iteratee, context, 1);
+    for (var i = 0; i < n; i++) accum[i] = iteratee(i);
     return accum;
   };
 
@@ -1398,33 +1288,33 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
     return new Date().getTime();
   };
 
-  // List of HTML entities for escaping.
-  var entityMap = {
-    escape: {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#x27;'
-    }
+   // List of HTML entities for escaping.
+  var escapeMap = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#x27;',
+    '`': '&#x60;'
   };
-  entityMap.unescape = _.invert(entityMap.escape);
-
-  // Regexes containing the keys and values listed immediately above.
-  var entityRegexes = {
-    escape:   RegExp('[' + _.keys(entityMap.escape).join('') + ']', 'g'),
-    unescape: RegExp('(' + _.keys(entityMap.unescape).join('|') + ')', 'g')
-  };
+  var unescapeMap = _.invert(escapeMap);
 
   // Functions for escaping and unescaping strings to/from HTML interpolation.
-  _.each(['escape', 'unescape'], function(method) {
-    _[method] = function(string) {
-      if (string == null) return '';
-      return ('' + string).replace(entityRegexes[method], function(match) {
-        return entityMap[method][match];
-      });
+  var createEscaper = function(map) {
+    var escaper = function(match) {
+      return map[match];
     };
-  });
+    // Regexes for identifying a key that needs to be escaped
+    var source = '(?:' + _.keys(map).join('|') + ')';
+    var testRegexp = RegExp(source);
+    var replaceRegexp = RegExp(source, 'g');
+    return function(string) {
+      string = string == null ? '' : '' + string;
+      return testRegexp.test(string) ? string.replace(replaceRegexp, escaper) : string;
+    };
+  };
+  _.escape = createEscaper(escapeMap);
+  _.unescape = createEscaper(unescapeMap);
 
   // If the value of the named `property` is a function then invoke it with the
   // `object` as context; otherwise, return it.
@@ -1475,7 +1365,9 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
   // JavaScript micro-templating, similar to John Resig's implementation.
   // Underscore templating handles arbitrary delimiters, preserves whitespace,
   // and correctly escapes quotes within interpolated code.
-  _.template = function(text, data, settings) {
+  // NB: `oldSettings` only exists for backwards compatibility.
+  _.template = function(text, settings, oldSettings) {
+    if (!settings && oldSettings) settings = oldSettings;
     settings = _.defaults({}, settings, _.templateSettings);
 
     // Combine delimiters into one regular expression via alternation.
@@ -1513,13 +1405,12 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
       source + 'return __p;\n';
 
     try {
-      var render = Function(settings.variable || 'obj', '_', source);
+      var render = new Function(settings.variable || 'obj', '_', source);
     } catch (e) {
       e.source = source;
       throw e;
     }
 
-    if (data) return render(data, _);
     var template = function(data) {
       return render.call(this, data, _);
     };
@@ -1603,7 +1494,8 @@ require.register("jashkenas-underscore/underscore.js", function(exports, require
 }.call(this));
 
 });
-require.register("jashkenas-backbone/backbone.js", function(exports, require, module){
+
+require.register("jashkenas~backbone@1.1.2", function (exports, module) {
 //     Backbone.js 1.1.2
 
 //     (c) 2010-2014 Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
@@ -1623,7 +1515,7 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
 
   // Next for Node.js or CommonJS. jQuery may not be needed as a module.
   } else if (typeof exports !== 'undefined') {
-    var _ = require('underscore');
+    var _ = require('jashkenas~underscore@1.7.0');
     factory(root, exports, _);
 
   // Finally, as a browser global.
@@ -1642,7 +1534,9 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
 
   // Create local references to array methods we'll want to use later.
   var array = [];
+  var push = array.push;
   var slice = array.slice;
+  var splice = array.splice;
 
   // Current version of the library. Keep in sync with `package.json`.
   Backbone.VERSION = '1.1.2';
@@ -1712,46 +1606,27 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
     // callbacks for the event. If `name` is null, removes all bound
     // callbacks for all events.
     off: function(name, callback, context) {
+      var retain, ev, events, names, i, l, j, k;
       if (!this._events || !eventsApi(this, 'off', name, [callback, context])) return this;
-
-      // Remove all callbacks for all events.
       if (!name && !callback && !context) {
         this._events = void 0;
         return this;
       }
-
-      var names = name ? [name] : _.keys(this._events);
-      for (var i = 0, length = names.length; i < length; i++) {
+      names = name ? [name] : _.keys(this._events);
+      for (i = 0, l = names.length; i < l; i++) {
         name = names[i];
-
-        // Bail out if there are no events stored.
-        var events = this._events[name];
-        if (!events) continue;
-
-        // Remove all callbacks for this event.
-        if (!callback && !context) {
-          delete this._events[name];
-          continue;
-        }
-
-        // Find any remaining events.
-        var remaining = [];
-        for (var j = 0, k = events.length; j < k; j++) {
-          var event = events[j];
-          if (
-            callback && callback !== event.callback &&
-            callback !== event.callback._callback ||
-            context && context !== event.context
-          ) {
-            remaining.push(event);
+        if (events = this._events[name]) {
+          this._events[name] = retain = [];
+          if (callback || context) {
+            for (j = 0, k = events.length; j < k; j++) {
+              ev = events[j];
+              if ((callback && callback !== ev.callback && callback !== ev.callback._callback) ||
+                  (context && context !== ev.context)) {
+                retain.push(ev);
+              }
+            }
           }
-        }
-
-        // Replace events if there are any remaining.  Otherwise, clean up.
-        if (remaining.length) {
-          this._events[name] = remaining;
-        } else {
-          delete this._events[name];
+          if (!retain.length) delete this._events[name];
         }
       }
 
@@ -1811,7 +1686,7 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
     // Handle space separated event names.
     if (eventSplitter.test(name)) {
       var names = name.split(eventSplitter);
-      for (var i = 0, length = names.length; i < length; i++) {
+      for (var i = 0, l = names.length; i < l; i++) {
         obj[action].apply(obj, [names[i]].concat(rest));
       }
       return false;
@@ -1976,7 +1851,7 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
       // Trigger all relevant attribute changes.
       if (!silent) {
         if (changes.length) this._pending = options;
-        for (var i = 0, length = changes.length; i < length; i++) {
+        for (var i = 0, l = changes.length; i < l; i++) {
           this.trigger('change:' + changes[i], this, current[changes[i]], options);
         }
       }
@@ -2197,11 +2072,10 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
   });
 
   // Underscore methods that we want to implement on the Model.
-  var modelMethods = ['keys', 'values', 'pairs', 'invert', 'pick', 'omit', 'chain'];
+  var modelMethods = ['keys', 'values', 'pairs', 'invert', 'pick', 'omit'];
 
   // Mix in each Underscore method as a proxy to `Model#attributes`.
   _.each(modelMethods, function(method) {
-    if (!_[method]) return;
     Model.prototype[method] = function() {
       var args = slice.call(arguments);
       args.unshift(this.attributes);
@@ -2213,7 +2087,7 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
   // -------------------
 
   // If models tend to represent a single row of data, a Backbone Collection is
-  // more analogous to a table full of data ... or a small slice or page of that
+  // more analagous to a table full of data ... or a small slice or page of that
   // table, or a collection of rows that belong together for a particular reason
   // -- all of the messages in this particular folder, all of the documents
   // belonging to this particular author, and so on. Collections maintain
@@ -2267,13 +2141,13 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
       var singular = !_.isArray(models);
       models = singular ? [models] : _.clone(models);
       options || (options = {});
-      for (var i = 0, length = models.length; i < length; i++) {
-        var model = models[i] = this.get(models[i]);
+      var i, l, index, model;
+      for (i = 0, l = models.length; i < l; i++) {
+        model = models[i] = this.get(models[i]);
         if (!model) continue;
-        var id = this.modelId(model.attributes);
-        if (id != null) delete this._byId[id];
+        delete this._byId[model.id];
         delete this._byId[model.cid];
-        var index = this.indexOf(model);
+        index = this.indexOf(model);
         this.models.splice(index, 1);
         this.length--;
         if (!options.silent) {
@@ -2293,9 +2167,10 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
       options = _.defaults({}, options, setOptions);
       if (options.parse) models = this.parse(models, options);
       var singular = !_.isArray(models);
-      models = singular ? (models ? [models] : []) : models.slice();
-      var id, model, attrs, existing, sort;
+      models = singular ? (models ? [models] : []) : _.clone(models);
+      var i, l, id, model, attrs, existing, sort;
       var at = options.at;
+      var targetModel = this.model;
       var sortable = this.comparator && (at == null) && options.sort !== false;
       var sortAttr = _.isString(this.comparator) ? this.comparator : null;
       var toAdd = [], toRemove = [], modelMap = {};
@@ -2304,15 +2179,20 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
 
       // Turn bare objects into model references, and prevent invalid models
       // from being added.
-      for (var i = 0, length = models.length; i < length; i++) {
-        attrs = models[i];
+      for (i = 0, l = models.length; i < l; i++) {
+        attrs = models[i] || {};
+        if (attrs instanceof Model) {
+          id = model = attrs;
+        } else {
+          id = attrs[targetModel.prototype.idAttribute || 'id'];
+        }
 
         // If a duplicate is found, prevent it from being added and
         // optionally merge it into the existing model.
-        if (existing = this.get(attrs)) {
+        if (existing = this.get(id)) {
           if (remove) modelMap[existing.cid] = true;
-          if (merge && attrs !== existing) {
-            attrs = this._isModel(attrs) ? attrs.attributes : attrs;
+          if (merge) {
+            attrs = attrs === model ? model.attributes : attrs;
             if (options.parse) attrs = existing.parse(attrs, options);
             existing.set(attrs, options);
             if (sortable && !sort && existing.hasChanged(sortAttr)) sort = true;
@@ -2329,15 +2209,13 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
 
         // Do not add multiple models with the same `id`.
         model = existing || model;
-        if (!model) continue;
-        id = this.modelId(model.attributes);
-        if (order && (model.isNew() || !modelMap[id])) order.push(model);
-        modelMap[id] = true;
+        if (order && (model.isNew() || !modelMap[model.id])) order.push(model);
+        modelMap[model.id] = true;
       }
 
       // Remove nonexistent models if appropriate.
       if (remove) {
-        for (var i = 0, length = this.length; i < length; i++) {
+        for (i = 0, l = this.length; i < l; ++i) {
           if (!modelMap[(model = this.models[i]).cid]) toRemove.push(model);
         }
         if (toRemove.length) this.remove(toRemove, options);
@@ -2348,13 +2226,13 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
         if (sortable) sort = true;
         this.length += toAdd.length;
         if (at != null) {
-          for (var i = 0, length = toAdd.length; i < length; i++) {
+          for (i = 0, l = toAdd.length; i < l; i++) {
             this.models.splice(at + i, 0, toAdd[i]);
           }
         } else {
           if (order) this.models.length = 0;
           var orderedModels = order || toAdd;
-          for (var i = 0, length = orderedModels.length; i < length; i++) {
+          for (i = 0, l = orderedModels.length; i < l; i++) {
             this.models.push(orderedModels[i]);
           }
         }
@@ -2365,7 +2243,7 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
 
       // Unless silenced, it's time to fire all appropriate add/sort events.
       if (!options.silent) {
-        for (var i = 0, length = toAdd.length; i < length; i++) {
+        for (i = 0, l = toAdd.length; i < l; i++) {
           (model = toAdd[i]).trigger('add', model, this, options);
         }
         if (sort || (order && order.length)) this.trigger('sort', this, options);
@@ -2381,7 +2259,7 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
     // Useful for bulk operations and optimizations.
     reset: function(models, options) {
       options || (options = {});
-      for (var i = 0, length = this.models.length; i < length; i++) {
+      for (var i = 0, l = this.models.length; i < l; i++) {
         this._removeReference(this.models[i], options);
       }
       options.previousModels = this.models;
@@ -2423,8 +2301,7 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
     // Get a model from the set by id.
     get: function(obj) {
       if (obj == null) return void 0;
-      var id = this.modelId(this._isModel(obj) ? obj.attributes : obj);
-      return this._byId[obj] || this._byId[id] || this._byId[obj.cid];
+      return this._byId[obj] || this._byId[obj.id] || this._byId[obj.cid];
     },
 
     // Get the model at the given index.
@@ -2516,15 +2393,7 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
 
     // Create a new collection with an identical list of models as this one.
     clone: function() {
-      return new this.constructor(this.models, {
-        model: this.model,
-        comparator: this.comparator
-      });
-    },
-
-    // Define how to uniquely identify models in the collection.
-    modelId: function (attrs) {
-      return attrs[this.model.prototype.idAttribute || 'id'];
+      return new this.constructor(this.models);
     },
 
     // Private method to reset all internal state. Called when the collection
@@ -2538,10 +2407,7 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
     // Prepare a hash of attributes (or other model) to be added to this
     // collection.
     _prepareModel: function(attrs, options) {
-      if (this._isModel(attrs)) {
-        if (!attrs.collection) attrs.collection = this;
-        return attrs;
-      }
+      if (attrs instanceof Model) return attrs;
       options = options ? _.clone(options) : {};
       options.collection = this;
       var model = new this.model(attrs, options);
@@ -2550,17 +2416,11 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
       return false;
     },
 
-    // Method for checking whether an object should be considered a model for
-    // the purposes of adding to the collection.
-    _isModel: function (model) {
-      return model instanceof Model;
-    },
-
     // Internal method to create a model's ties to a collection.
     _addReference: function(model, options) {
       this._byId[model.cid] = model;
-      var id = this.modelId(model.attributes);
-      if (id != null) this._byId[id] = model;
+      if (model.id != null) this._byId[model.id] = model;
+      if (!model.collection) model.collection = this;
       model.on('all', this._onModelEvent, this);
     },
 
@@ -2577,13 +2437,9 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
     _onModelEvent: function(event, model, collection, options) {
       if ((event === 'add' || event === 'remove') && collection !== this) return;
       if (event === 'destroy') this.remove(model, options);
-      if (event === 'change') {
-        var prevId = this.modelId(model.previousAttributes());
-        var id = this.modelId(model.attributes);
-        if (prevId !== id) {
-          if (prevId != null) delete this._byId[prevId];
-          if (id != null) this._byId[id] = model;
-        }
+      if (model && event === 'change:' + model.idAttribute) {
+        delete this._byId[model.previous(model.idAttribute)];
+        if (model.id != null) this._byId[model.id] = model;
       }
       this.trigger.apply(this, arguments);
     }
@@ -2598,11 +2454,10 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
     'reject', 'every', 'all', 'some', 'any', 'include', 'contains', 'invoke',
     'max', 'min', 'toArray', 'size', 'first', 'head', 'take', 'initial', 'rest',
     'tail', 'drop', 'last', 'without', 'difference', 'indexOf', 'shuffle',
-    'lastIndexOf', 'isEmpty', 'chain', 'sample', 'partition'];
+    'lastIndexOf', 'isEmpty', 'chain', 'sample'];
 
   // Mix in each Underscore method as a proxy to `Collection#models`.
   _.each(methods, function(method) {
-    if (!_[method]) return;
     Collection.prototype[method] = function() {
       var args = slice.call(arguments);
       args.unshift(this.models);
@@ -2615,7 +2470,6 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
 
   // Use attributes instead of properties.
   _.each(attributeMethods, function(method) {
-    if (!_[method]) return;
     Collection.prototype[method] = function(value, context) {
       var iterator = _.isFunction(value) ? value : function(model) {
         return model.get(value);
@@ -2643,6 +2497,7 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
     _.extend(this, _.pick(options, viewOptions));
     this._ensureElement();
     this.initialize.apply(this, arguments);
+    this.delegateEvents();
   };
 
   // Cached regex to split keys for `delegate`.
@@ -2677,35 +2532,19 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
     // Remove this view by taking the element out of the DOM, and removing any
     // applicable Backbone.Events listeners.
     remove: function() {
-      this._removeElement();
+      this.$el.remove();
       this.stopListening();
       return this;
     },
 
-    // Remove this view's element from the document and all event listeners
-    // attached to it. Exposed for subclasses using an alternative DOM
-    // manipulation API.
-    _removeElement: function() {
-      this.$el.remove();
-    },
-
-    // Change the view's element (`this.el` property) and re-delegate the
-    // view's events on the new element.
-    setElement: function(element) {
-      this.undelegateEvents();
-      this._setElement(element);
-      this.delegateEvents();
-      return this;
-    },
-
-    // Creates the `this.el` and `this.$el` references for this view using the
-    // given `el` and a hash of `attributes`. `el` can be a CSS selector or an
-    // HTML string, a jQuery context or an element. Subclasses can override
-    // this to utilize an alternative DOM manipulation API and are only required
-    // to set the `this.el` property.
-    _setElement: function(el) {
-      this.$el = el instanceof Backbone.$ ? el : Backbone.$(el);
+    // Change the view's element (`this.el` property), including event
+    // re-delegation.
+    setElement: function(element, delegate) {
+      if (this.$el) this.undelegateEvents();
+      this.$el = element instanceof Backbone.$ ? element : Backbone.$(element);
       this.el = this.$el[0];
+      if (delegate !== false) this.delegateEvents();
+      return this;
     },
 
     // Set callbacks, where `this.events` is a hash of
@@ -2721,6 +2560,8 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
     // pairs. Callbacks will be bound to the view, with `this` set properly.
     // Uses event delegation for efficiency.
     // Omitting the selector binds the event to `this.el`.
+    // This only works for delegate-able events: not `focus`, `blur`, and
+    // not `change`, `submit`, and `reset` in Internet Explorer.
     delegateEvents: function(events) {
       if (!(events || (events = _.result(this, 'events')))) return this;
       this.undelegateEvents();
@@ -2728,37 +2569,26 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
         var method = events[key];
         if (!_.isFunction(method)) method = this[events[key]];
         if (!method) continue;
+
         var match = key.match(delegateEventSplitter);
-        this.delegate(match[1], match[2], _.bind(method, this));
+        var eventName = match[1], selector = match[2];
+        method = _.bind(method, this);
+        eventName += '.delegateEvents' + this.cid;
+        if (selector === '') {
+          this.$el.on(eventName, method);
+        } else {
+          this.$el.on(eventName, selector, method);
+        }
       }
       return this;
     },
 
-    // Add a single event listener to the view's element (or a child element
-    // using `selector`). This only works for delegate-able events: not `focus`,
-    // `blur`, and not `change`, `submit`, and `reset` in Internet Explorer.
-    delegate: function(eventName, selector, listener) {
-      this.$el.on(eventName + '.delegateEvents' + this.cid, selector, listener);
-    },
-
-    // Clears all callbacks previously bound to the view by `delegateEvents`.
+    // Clears all callbacks previously bound to the view with `delegateEvents`.
     // You usually don't need to use this, but may wish to if you have multiple
     // Backbone views attached to the same DOM element.
     undelegateEvents: function() {
-      if (this.$el) this.$el.off('.delegateEvents' + this.cid);
+      this.$el.off('.delegateEvents' + this.cid);
       return this;
-    },
-
-    // A finer-grained `undelegateEvents` for removing a single delegated event.
-    // `selector` and `listener` are both optional.
-    undelegate: function(eventName, selector, listener) {
-      this.$el.off(eventName + '.delegateEvents' + this.cid, selector, listener);
-    },
-
-    // Produces a DOM element to be assigned to your view. Exposed for
-    // subclasses using an alternative DOM manipulation API.
-    _createElement: function(tagName) {
-      return document.createElement(tagName);
     },
 
     // Ensure that the View has a DOM element to render into.
@@ -2770,17 +2600,11 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
         var attrs = _.extend({}, _.result(this, 'attributes'));
         if (this.id) attrs.id = _.result(this, 'id');
         if (this.className) attrs['class'] = _.result(this, 'className');
-        this.setElement(this._createElement(_.result(this, 'tagName')));
-        this._setAttributes(attrs);
+        var $el = Backbone.$('<' + _.result(this, 'tagName') + '>').attr(attrs);
+        this.setElement($el, false);
       } else {
-        this.setElement(_.result(this, 'el'));
+        this.setElement(_.result(this, 'el'), false);
       }
-    },
-
-    // Set attributes from a hash on this view's element.  Exposed for
-    // subclasses using an alternative DOM manipulation API.
-    _setAttributes: function(attributes) {
-      this.$el.attr(attributes);
     }
 
   });
@@ -2849,19 +2673,24 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
       params.processData = false;
     }
 
-    // Pass along `textStatus` and `errorThrown` from jQuery.
-    var error = options.error;
-    options.error = function(xhr, textStatus, errorThrown) {
-      options.textStatus = textStatus;
-      options.errorThrown = errorThrown;
-      if (error) error.apply(this, arguments);
-    };
+    // If we're sending a `PATCH` request, and we're in an old Internet Explorer
+    // that still has ActiveX enabled by default, override jQuery to use that
+    // for XHR instead. Remove this line when jQuery supports `PATCH` on IE8.
+    if (params.type === 'PATCH' && noXhrPatch) {
+      params.xhr = function() {
+        return new ActiveXObject("Microsoft.XMLHTTP");
+      };
+    }
 
     // Make the request, allowing the user to override any Ajax options.
     var xhr = options.xhr = Backbone.ajax(_.extend(params, options));
     model.trigger('request', model, xhr, options);
     return xhr;
   };
+
+  var noXhrPatch =
+    typeof window !== 'undefined' && !!window.ActiveXObject &&
+      !(window.XMLHttpRequest && (new XMLHttpRequest).dispatchEvent);
 
   // Map from CRUD to HTTP for our default `Backbone.sync` implementation.
   var methodMap = {
@@ -2920,18 +2749,17 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
       var router = this;
       Backbone.history.route(route, function(fragment) {
         var args = router._extractParameters(route, fragment);
-        if (router.execute(callback, args, name) !== false) {
-          router.trigger.apply(router, ['route:' + name].concat(args));
-          router.trigger('route', name, args);
-          Backbone.history.trigger('route', router, name, args);
-        }
+        router.execute(callback, args);
+        router.trigger.apply(router, ['route:' + name].concat(args));
+        router.trigger('route', name, args);
+        Backbone.history.trigger('route', router, name, args);
       });
       return this;
     },
 
     // Execute a route handler with the provided parameters.  This is an
     // excellent place to do pre-route setup or post-route cleanup.
-    execute: function(callback, args, name) {
+    execute: function(callback, args) {
       if (callback) callback.apply(this, args);
     },
 
@@ -3004,6 +2832,12 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
   // Cached regex for stripping leading and trailing slashes.
   var rootStripper = /^\/+|\/+$/g;
 
+  // Cached regex for detecting MSIE.
+  var isExplorer = /msie [\w.]+/;
+
+  // Cached regex for removing a trailing slash.
+  var trailingSlash = /\/$/;
+
   // Cached regex for stripping urls of hash.
   var pathStripper = /#.*$/;
 
@@ -3019,8 +2853,7 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
 
     // Are we at the app root?
     atRoot: function() {
-      var path = this.location.pathname.replace(/[^\/]$/, '$&/');
-      return path === this.root && !this.location.search;
+      return this.location.pathname.replace(/[^\/]$/, '$&/') === this.root;
     },
 
     // Gets the true hash value. Cannot use location.hash directly due to bug
@@ -3030,19 +2863,14 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
       return match ? match[1] : '';
     },
 
-    // Get the pathname and search params, without the root.
-    getPath: function() {
-      var path = decodeURI(this.location.pathname + this.location.search);
-      var root = this.root.slice(0, -1);
-      if (!path.indexOf(root)) path = path.slice(root.length);
-      return path.slice(1);
-    },
-
-    // Get the cross-browser normalized URL fragment from the path or hash.
-    getFragment: function(fragment) {
+    // Get the cross-browser normalized URL fragment, either from the URL,
+    // the hash, or the override.
+    getFragment: function(fragment, forcePushState) {
       if (fragment == null) {
-        if (this._hasPushState || !this._wantsHashChange) {
-          fragment = this.getPath();
+        if (this._hasPushState || !this._wantsHashChange || forcePushState) {
+          fragment = decodeURI(this.location.pathname + this.location.search);
+          var root = this.root.replace(trailingSlash, '');
+          if (!fragment.indexOf(root)) fragment = fragment.slice(root.length);
         } else {
           fragment = this.getHash();
         }
@@ -3061,42 +2889,35 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
       this.options          = _.extend({root: '/'}, this.options, options);
       this.root             = this.options.root;
       this._wantsHashChange = this.options.hashChange !== false;
-      this._hasHashChange   = 'onhashchange' in window;
       this._wantsPushState  = !!this.options.pushState;
       this._hasPushState    = !!(this.options.pushState && this.history && this.history.pushState);
-      this.fragment         = this.getFragment();
-
-      // Add a cross-platform `addEventListener` shim for older browsers.
-      var addEventListener = window.addEventListener || function (eventName, listener) {
-        return attachEvent('on' + eventName, listener);
-      };
+      var fragment          = this.getFragment();
+      var docMode           = document.documentMode;
+      var oldIE             = (isExplorer.exec(navigator.userAgent.toLowerCase()) && (!docMode || docMode <= 7));
 
       // Normalize root to always include a leading and trailing slash.
       this.root = ('/' + this.root + '/').replace(rootStripper, '/');
 
-      // Proxy an iframe to handle location events if the browser doesn't
-      // support the `hashchange` event, HTML5 history, or the user wants
-      // `hashChange` but not `pushState`.
-      if (!this._hasHashChange && this._wantsHashChange && (!this._wantsPushState || !this._hasPushState)) {
-        var iframe = document.createElement('iframe');
-        iframe.src = 'javascript:0';
-        iframe.style.display = 'none';
-        iframe.tabIndex = -1;
-        var body = document.body;
-        // Using `appendChild` will throw on IE < 9 if the document is not ready.
-        this.iframe = body.insertBefore(iframe, body.firstChild).contentWindow;
-        this.navigate(this.fragment);
+      if (oldIE && this._wantsHashChange) {
+        var frame = Backbone.$('<iframe src="javascript:0" tabindex="-1">');
+        this.iframe = frame.hide().appendTo('body')[0].contentWindow;
+        this.navigate(fragment);
       }
 
       // Depending on whether we're using pushState or hashes, and whether
       // 'onhashchange' is supported, determine how we check the URL state.
       if (this._hasPushState) {
-        addEventListener('popstate', this.checkUrl, false);
-      } else if (this._wantsHashChange && this._hasHashChange && !this.iframe) {
-        addEventListener('hashchange', this.checkUrl, false);
+        Backbone.$(window).on('popstate', this.checkUrl);
+      } else if (this._wantsHashChange && ('onhashchange' in window) && !oldIE) {
+        Backbone.$(window).on('hashchange', this.checkUrl);
       } else if (this._wantsHashChange) {
         this._checkUrlInterval = setInterval(this.checkUrl, this.interval);
       }
+
+      // Determine if we need to change the base url, for a pushState link
+      // opened by a non-pushState browser.
+      this.fragment = fragment;
+      var loc = this.location;
 
       // Transition from hashChange to pushState or vice versa if both are
       // requested.
@@ -3105,14 +2926,16 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
         // If we've started off with a route from a `pushState`-enabled
         // browser, but we're currently in a browser that doesn't support it...
         if (!this._hasPushState && !this.atRoot()) {
-          this.location.replace(this.root + '#' + this.getPath());
+          this.fragment = this.getFragment(null, true);
+          this.location.replace(this.root + '#' + this.fragment);
           // Return immediately as browser will do redirect to new url
           return true;
 
         // Or if we've started out with a hash-based route, but we're currently
         // in a browser where it could be `pushState`-based instead...
-        } else if (this._hasPushState && this.atRoot()) {
-          this.navigate(this.getHash(), {replace: true});
+        } else if (this._hasPushState && this.atRoot() && loc.hash) {
+          this.fragment = this.getHash().replace(routeStripper, '');
+          this.history.replaceState({}, document.title, this.root + this.fragment);
         }
 
       }
@@ -3123,25 +2946,7 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
     // Disable Backbone.history, perhaps temporarily. Not useful in a real app,
     // but possibly useful for unit testing Routers.
     stop: function() {
-      // Add a cross-platform `removeEventListener` shim for older browsers.
-      var removeEventListener = window.removeEventListener || function (eventName, listener) {
-        return detachEvent('on' + eventName, listener);
-      };
-
-      // Remove window listeners.
-      if (this._hasPushState) {
-        removeEventListener('popstate', this.checkUrl, false);
-      } else if (this._wantsHashChange && this._hasHashChange && !this.iframe) {
-        removeEventListener('hashchange', this.checkUrl, false);
-      }
-
-      // Clean up the iframe if necessary.
-      if (this.iframe) {
-        document.body.removeChild(this.iframe.frameElement);
-        this.iframe = null;
-      }
-
-      // Some environments will throw when clearing an undefined interval.
+      Backbone.$(window).off('popstate', this.checkUrl).off('hashchange', this.checkUrl);
       if (this._checkUrlInterval) clearInterval(this._checkUrlInterval);
       History.started = false;
     },
@@ -3157,7 +2962,7 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
     checkUrl: function(e) {
       var current = this.getFragment();
       if (current === this.fragment && this.iframe) {
-        current = this.getHash(this.iframe);
+        current = this.getFragment(this.getHash(this.iframe));
       }
       if (current === this.fragment) return false;
       if (this.iframe) this.navigate(current);
@@ -3190,8 +2995,8 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
 
       var url = this.root + (fragment = this.getFragment(fragment || ''));
 
-      // Strip the hash and decode for matching.
-      fragment = decodeURI(fragment.replace(pathStripper, ''));
+      // Strip the hash for matching.
+      fragment = fragment.replace(pathStripper, '');
 
       if (this.fragment === fragment) return;
       this.fragment = fragment;
@@ -3207,7 +3012,7 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
       // fragment to store history.
       } else if (this._wantsHashChange) {
         this._updateHash(this.location, fragment, options.replace);
-        if (this.iframe && (fragment !== this.getHash(this.iframe))) {
+        if (this.iframe && (fragment !== this.getFragment(this.getHash(this.iframe)))) {
           // Opening and closing the iframe tricks IE7 and earlier to push a
           // history entry on hash-tag change.  When replace is true, we don't
           // want this.
@@ -3301,25 +3106,26 @@ require.register("jashkenas-backbone/backbone.js", function(exports, require, mo
 }));
 
 });
-require.register("moment-moment/moment.js", function(exports, require, module){
+
+require.register("moment~moment@2.8.3", function (exports, module) {
 //! moment.js
-//! version : 2.7.0
+//! version : 2.8.3
 //! authors : Tim Wood, Iskren Chernev, Moment.js contributors
 //! license : MIT
 //! momentjs.com
 
 (function (undefined) {
-
     /************************************
         Constants
     ************************************/
 
     var moment,
-        VERSION = "2.7.0",
+        VERSION = '2.8.3',
         // the global-scope this is NOT the global object in Node.js
         globalScope = typeof global !== 'undefined' ? global : this,
         oldGlobalMoment,
         round = Math.round,
+        hasOwnProperty = Object.prototype.hasOwnProperty,
         i,
 
         YEAR = 0,
@@ -3330,22 +3136,11 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         SECOND = 5,
         MILLISECOND = 6,
 
-        // internal storage for language config files
-        languages = {},
+        // internal storage for locale config files
+        locales = {},
 
-        // moment internal properties
-        momentProperties = {
-            _isAMomentObject: null,
-            _i : null,
-            _f : null,
-            _l : null,
-            _strict : null,
-            _tzm : null,
-            _isUTC : null,
-            _offset : null,  // optional. Combine with _isUTC
-            _pf : null,
-            _lang : null  // optional
-        },
+        // extra moment internal properties (plugins register props here)
+        momentProperties = [],
 
         // check for nodeJS
         hasModule = (typeof module !== 'undefined' && module.exports),
@@ -3404,7 +3199,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
             ['HH', /(T| )\d\d/]
         ],
 
-        // timezone chunker "+10:00" > ["10", "00"] or "-1530" > ["-15", "30"]
+        // timezone chunker '+10:00' > ['10', '00'] or '-1530' > ['-15', '30']
         parseTimezoneChunker = /([\+\-]|\d\d)/gi,
 
         // getter and setter names
@@ -3451,12 +3246,11 @@ require.register("moment-moment/moment.js", function(exports, require, module){
 
         // default relative time thresholds
         relativeTimeThresholds = {
-          s: 45,   //seconds to minutes
-          m: 45,   //minutes to hours
-          h: 22,   //hours to days
-          dd: 25,  //days to month (month == 1)
-          dm: 45,  //days to months (months > 1)
-          dy: 345  //days to year
+            s: 45,  // seconds to minute
+            m: 45,  // minutes to hour
+            h: 22,  // hours to day
+            d: 26,  // days to month
+            M: 11   // months to year
         },
 
         // tokens to ordinalize and pad
@@ -3468,10 +3262,10 @@ require.register("moment-moment/moment.js", function(exports, require, module){
                 return this.month() + 1;
             },
             MMM  : function (format) {
-                return this.lang().monthsShort(this, format);
+                return this.localeData().monthsShort(this, format);
             },
             MMMM : function (format) {
-                return this.lang().months(this, format);
+                return this.localeData().months(this, format);
             },
             D    : function () {
                 return this.date();
@@ -3483,13 +3277,13 @@ require.register("moment-moment/moment.js", function(exports, require, module){
                 return this.day();
             },
             dd   : function (format) {
-                return this.lang().weekdaysMin(this, format);
+                return this.localeData().weekdaysMin(this, format);
             },
             ddd  : function (format) {
-                return this.lang().weekdaysShort(this, format);
+                return this.localeData().weekdaysShort(this, format);
             },
             dddd : function (format) {
-                return this.lang().weekdays(this, format);
+                return this.localeData().weekdays(this, format);
             },
             w    : function () {
                 return this.week();
@@ -3535,10 +3329,10 @@ require.register("moment-moment/moment.js", function(exports, require, module){
                 return this.isoWeekday();
             },
             a    : function () {
-                return this.lang().meridiem(this.hours(), this.minutes(), true);
+                return this.localeData().meridiem(this.hours(), this.minutes(), true);
             },
             A    : function () {
-                return this.lang().meridiem(this.hours(), this.minutes(), false);
+                return this.localeData().meridiem(this.hours(), this.minutes(), false);
             },
             H    : function () {
                 return this.hours();
@@ -3566,19 +3360,19 @@ require.register("moment-moment/moment.js", function(exports, require, module){
             },
             Z    : function () {
                 var a = -this.zone(),
-                    b = "+";
+                    b = '+';
                 if (a < 0) {
                     a = -a;
-                    b = "-";
+                    b = '-';
                 }
-                return b + leftZeroFill(toInt(a / 60), 2) + ":" + leftZeroFill(toInt(a) % 60, 2);
+                return b + leftZeroFill(toInt(a / 60), 2) + ':' + leftZeroFill(toInt(a) % 60, 2);
             },
             ZZ   : function () {
                 var a = -this.zone(),
-                    b = "+";
+                    b = '+';
                 if (a < 0) {
                     a = -a;
-                    b = "-";
+                    b = '-';
                 }
                 return b + leftZeroFill(toInt(a / 60), 2) + leftZeroFill(toInt(a) % 60, 2);
             },
@@ -3596,6 +3390,8 @@ require.register("moment-moment/moment.js", function(exports, require, module){
             }
         },
 
+        deprecations = {},
+
         lists = ['months', 'monthsShort', 'weekdays', 'weekdaysShort', 'weekdaysMin'];
 
     // Pick the first defined of two or three arguments. dfl comes from
@@ -3604,8 +3400,12 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         switch (arguments.length) {
             case 2: return a != null ? a : b;
             case 3: return a != null ? a : b != null ? b : c;
-            default: throw new Error("Implement me");
+            default: throw new Error('Implement me');
         }
+    }
+
+    function hasOwnProp(a, b) {
+        return hasOwnProperty.call(a, b);
     }
 
     function defaultParsingFlags() {
@@ -3625,21 +3425,29 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         };
     }
 
+    function printMsg(msg) {
+        if (moment.suppressDeprecationWarnings === false &&
+                typeof console !== 'undefined' && console.warn) {
+            console.warn('Deprecation warning: ' + msg);
+        }
+    }
+
     function deprecate(msg, fn) {
         var firstTime = true;
-        function printMsg() {
-            if (moment.suppressDeprecationWarnings === false &&
-                    typeof console !== 'undefined' && console.warn) {
-                console.warn("Deprecation warning: " + msg);
-            }
-        }
         return extend(function () {
             if (firstTime) {
-                printMsg();
+                printMsg(msg);
                 firstTime = false;
             }
             return fn.apply(this, arguments);
         }, fn);
+    }
+
+    function deprecateSimple(name, msg) {
+        if (!deprecations[name]) {
+            printMsg(msg);
+            deprecations[name] = true;
+        }
     }
 
     function padToken(func, count) {
@@ -3649,7 +3457,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
     }
     function ordinalizeToken(func, period) {
         return function (a) {
-            return this.lang().ordinal(func.call(this, a), period);
+            return this.localeData().ordinal(func.call(this, a), period);
         };
     }
 
@@ -3668,14 +3476,16 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         Constructors
     ************************************/
 
-    function Language() {
-
+    function Locale() {
     }
 
     // Moment prototype object
-    function Moment(config) {
-        checkOverflow(config);
-        extend(this, config);
+    function Moment(config, skipOverflow) {
+        if (skipOverflow !== false) {
+            checkOverflow(config);
+        }
+        copyConfig(this, config);
+        this._d = new Date(+config._d);
     }
 
     // Duration Constructor
@@ -3709,6 +3519,8 @@ require.register("moment-moment/moment.js", function(exports, require, module){
 
         this._data = {};
 
+        this._locale = moment.localeData();
+
         this._bubble();
     }
 
@@ -3719,31 +3531,67 @@ require.register("moment-moment/moment.js", function(exports, require, module){
 
     function extend(a, b) {
         for (var i in b) {
-            if (b.hasOwnProperty(i)) {
+            if (hasOwnProp(b, i)) {
                 a[i] = b[i];
             }
         }
 
-        if (b.hasOwnProperty("toString")) {
+        if (hasOwnProp(b, 'toString')) {
             a.toString = b.toString;
         }
 
-        if (b.hasOwnProperty("valueOf")) {
+        if (hasOwnProp(b, 'valueOf')) {
             a.valueOf = b.valueOf;
         }
 
         return a;
     }
 
-    function cloneMoment(m) {
-        var result = {}, i;
-        for (i in m) {
-            if (m.hasOwnProperty(i) && momentProperties.hasOwnProperty(i)) {
-                result[i] = m[i];
+    function copyConfig(to, from) {
+        var i, prop, val;
+
+        if (typeof from._isAMomentObject !== 'undefined') {
+            to._isAMomentObject = from._isAMomentObject;
+        }
+        if (typeof from._i !== 'undefined') {
+            to._i = from._i;
+        }
+        if (typeof from._f !== 'undefined') {
+            to._f = from._f;
+        }
+        if (typeof from._l !== 'undefined') {
+            to._l = from._l;
+        }
+        if (typeof from._strict !== 'undefined') {
+            to._strict = from._strict;
+        }
+        if (typeof from._tzm !== 'undefined') {
+            to._tzm = from._tzm;
+        }
+        if (typeof from._isUTC !== 'undefined') {
+            to._isUTC = from._isUTC;
+        }
+        if (typeof from._offset !== 'undefined') {
+            to._offset = from._offset;
+        }
+        if (typeof from._pf !== 'undefined') {
+            to._pf = from._pf;
+        }
+        if (typeof from._locale !== 'undefined') {
+            to._locale = from._locale;
+        }
+
+        if (momentProperties.length > 0) {
+            for (i in momentProperties) {
+                prop = momentProperties[i];
+                val = from[prop];
+                if (typeof val !== 'undefined') {
+                    to[prop] = val;
+                }
             }
         }
 
-        return result;
+        return to;
     }
 
     function absRound(number) {
@@ -3766,7 +3614,51 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         return (sign ? (forceSign ? '+' : '') : '-') + output;
     }
 
-    // helper function for _.addTime and _.subtractTime
+    function positiveMomentsDifference(base, other) {
+        var res = {milliseconds: 0, months: 0};
+
+        res.months = other.month() - base.month() +
+            (other.year() - base.year()) * 12;
+        if (base.clone().add(res.months, 'M').isAfter(other)) {
+            --res.months;
+        }
+
+        res.milliseconds = +other - +(base.clone().add(res.months, 'M'));
+
+        return res;
+    }
+
+    function momentsDifference(base, other) {
+        var res;
+        other = makeAs(other, base);
+        if (base.isBefore(other)) {
+            res = positiveMomentsDifference(base, other);
+        } else {
+            res = positiveMomentsDifference(other, base);
+            res.milliseconds = -res.milliseconds;
+            res.months = -res.months;
+        }
+
+        return res;
+    }
+
+    // TODO: remove 'name' arg after deprecation is removed
+    function createAdder(direction, name) {
+        return function (val, period) {
+            var dur, tmp;
+            //invert the arguments, but complain about it
+            if (period !== null && !isNaN(+period)) {
+                deprecateSimple(name, 'moment().' + name  + '(period, number) is deprecated. Please use moment().' + name + '(number, period).');
+                tmp = val; val = period; period = tmp;
+            }
+
+            val = typeof val === 'string' ? +val : val;
+            dur = moment.duration(val, period);
+            addOrSubtractDurationFromMoment(this, dur, direction);
+            return this;
+        };
+    }
+
     function addOrSubtractDurationFromMoment(mom, duration, isAdding, updateOffset) {
         var milliseconds = duration._milliseconds,
             days = duration._days,
@@ -3793,8 +3685,8 @@ require.register("moment-moment/moment.js", function(exports, require, module){
     }
 
     function isDate(input) {
-        return  Object.prototype.toString.call(input) === '[object Date]' ||
-                input instanceof Date;
+        return Object.prototype.toString.call(input) === '[object Date]' ||
+            input instanceof Date;
     }
 
     // compare two arrays, return the number of differences
@@ -3826,7 +3718,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
             prop;
 
         for (prop in inputObject) {
-            if (inputObject.hasOwnProperty(prop)) {
+            if (hasOwnProp(inputObject, prop)) {
                 normalizedProp = normalizeUnits(prop);
                 if (normalizedProp) {
                     normalizedInput[normalizedProp] = inputObject[prop];
@@ -3854,7 +3746,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
 
         moment[field] = function (format, index) {
             var i, getter,
-                method = moment.fn._lang[field],
+                method = moment._locale[field],
                 results = [];
 
             if (typeof format === 'number') {
@@ -3864,7 +3756,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
 
             getter = function (i) {
                 var m = moment().utc().set(setter, i);
-                return method.call(moment.fn._lang, m, format || '');
+                return method.call(moment._locale, m, format || '');
             };
 
             if (index != null) {
@@ -3949,8 +3841,48 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         return m._isValid;
     }
 
-    function normalizeLanguage(key) {
+    function normalizeLocale(key) {
         return key ? key.toLowerCase().replace('_', '-') : key;
+    }
+
+    // pick the locale from the array
+    // try ['en-au', 'en-gb'] as 'en-au', 'en-gb', 'en', as in move through the list trying each
+    // substring from most specific to least, but move to the next array item if it's a more specific variant than the current root
+    function chooseLocale(names) {
+        var i = 0, j, next, locale, split;
+
+        while (i < names.length) {
+            split = normalizeLocale(names[i]).split('-');
+            j = split.length;
+            next = normalizeLocale(names[i + 1]);
+            next = next ? next.split('-') : null;
+            while (j > 0) {
+                locale = loadLocale(split.slice(0, j).join('-'));
+                if (locale) {
+                    return locale;
+                }
+                if (next && next.length >= j && compareArrays(split, next, true) >= j - 1) {
+                    //the next array item is better than a shallower substring of this one
+                    break;
+                }
+                j--;
+            }
+            i++;
+        }
+        return null;
+    }
+
+    function loadLocale(name) {
+        var oldLocale = null;
+        if (!locales[name] && hasModule) {
+            try {
+                oldLocale = moment.locale();
+                require('./locale/' + name);
+                // because defineLocale currently also sets the global locale, we want to undo that for lazy loaded locales
+                moment.locale(oldLocale);
+            } catch (e) { }
+        }
+        return locales[name];
     }
 
     // Return a moment from input, that is local/utc/zone equivalent to model.
@@ -3960,11 +3892,11 @@ require.register("moment-moment/moment.js", function(exports, require, module){
     }
 
     /************************************
-        Languages
+        Locale
     ************************************/
 
 
-    extend(Language.prototype, {
+    extend(Locale.prototype, {
 
         set : function (config) {
             var prop, i;
@@ -3978,12 +3910,12 @@ require.register("moment-moment/moment.js", function(exports, require, module){
             }
         },
 
-        _months : "January_February_March_April_May_June_July_August_September_October_November_December".split("_"),
+        _months : 'January_February_March_April_May_June_July_August_September_October_November_December'.split('_'),
         months : function (m) {
             return this._months[m.month()];
         },
 
-        _monthsShort : "Jan_Feb_Mar_Apr_May_Jun_Jul_Aug_Sep_Oct_Nov_Dec".split("_"),
+        _monthsShort : 'Jan_Feb_Mar_Apr_May_Jun_Jul_Aug_Sep_Oct_Nov_Dec'.split('_'),
         monthsShort : function (m) {
             return this._monthsShort[m.month()];
         },
@@ -4009,17 +3941,17 @@ require.register("moment-moment/moment.js", function(exports, require, module){
             }
         },
 
-        _weekdays : "Sunday_Monday_Tuesday_Wednesday_Thursday_Friday_Saturday".split("_"),
+        _weekdays : 'Sunday_Monday_Tuesday_Wednesday_Thursday_Friday_Saturday'.split('_'),
         weekdays : function (m) {
             return this._weekdays[m.day()];
         },
 
-        _weekdaysShort : "Sun_Mon_Tue_Wed_Thu_Fri_Sat".split("_"),
+        _weekdaysShort : 'Sun_Mon_Tue_Wed_Thu_Fri_Sat'.split('_'),
         weekdaysShort : function (m) {
             return this._weekdaysShort[m.day()];
         },
 
-        _weekdaysMin : "Su_Mo_Tu_We_Th_Fr_Sa".split("_"),
+        _weekdaysMin : 'Su_Mo_Tu_We_Th_Fr_Sa'.split('_'),
         weekdaysMin : function (m) {
             return this._weekdaysMin[m.day()];
         },
@@ -4046,11 +3978,11 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         },
 
         _longDateFormat : {
-            LT : "h:mm A",
-            L : "MM/DD/YYYY",
-            LL : "MMMM D YYYY",
-            LLL : "MMMM D YYYY LT",
-            LLLL : "dddd, MMMM D YYYY LT"
+            LT : 'h:mm A',
+            L : 'MM/DD/YYYY',
+            LL : 'MMMM D, YYYY',
+            LLL : 'MMMM D, YYYY LT',
+            LLLL : 'dddd, MMMM D, YYYY LT'
         },
         longDateFormat : function (key) {
             var output = this._longDateFormat[key];
@@ -4092,35 +4024,37 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         },
 
         _relativeTime : {
-            future : "in %s",
-            past : "%s ago",
-            s : "a few seconds",
-            m : "a minute",
-            mm : "%d minutes",
-            h : "an hour",
-            hh : "%d hours",
-            d : "a day",
-            dd : "%d days",
-            M : "a month",
-            MM : "%d months",
-            y : "a year",
-            yy : "%d years"
+            future : 'in %s',
+            past : '%s ago',
+            s : 'a few seconds',
+            m : 'a minute',
+            mm : '%d minutes',
+            h : 'an hour',
+            hh : '%d hours',
+            d : 'a day',
+            dd : '%d days',
+            M : 'a month',
+            MM : '%d months',
+            y : 'a year',
+            yy : '%d years'
         },
+
         relativeTime : function (number, withoutSuffix, string, isFuture) {
             var output = this._relativeTime[string];
             return (typeof output === 'function') ?
                 output(number, withoutSuffix, string, isFuture) :
                 output.replace(/%d/i, number);
         },
+
         pastFuture : function (diff, output) {
             var format = this._relativeTime[diff > 0 ? 'future' : 'past'];
             return typeof format === 'function' ? format(output) : format.replace(/%s/i, output);
         },
 
         ordinal : function (number) {
-            return this._ordinal.replace("%d", number);
+            return this._ordinal.replace('%d', number);
         },
-        _ordinal : "%d",
+        _ordinal : '%d',
 
         preparse : function (string) {
             return string;
@@ -4145,78 +4079,6 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         }
     });
 
-    // Loads a language definition into the `languages` cache.  The function
-    // takes a key and optionally values.  If not in the browser and no values
-    // are provided, it will load the language file module.  As a convenience,
-    // this function also returns the language values.
-    function loadLang(key, values) {
-        values.abbr = key;
-        if (!languages[key]) {
-            languages[key] = new Language();
-        }
-        languages[key].set(values);
-        return languages[key];
-    }
-
-    // Remove a language from the `languages` cache. Mostly useful in tests.
-    function unloadLang(key) {
-        delete languages[key];
-    }
-
-    // Determines which language definition to use and returns it.
-    //
-    // With no parameters, it will return the global language.  If you
-    // pass in a language key, such as 'en', it will return the
-    // definition for 'en', so long as 'en' has already been loaded using
-    // moment.lang.
-    function getLangDefinition(key) {
-        var i = 0, j, lang, next, split,
-            get = function (k) {
-                if (!languages[k] && hasModule) {
-                    try {
-                        require('./lang/' + k);
-                    } catch (e) { }
-                }
-                return languages[k];
-            };
-
-        if (!key) {
-            return moment.fn._lang;
-        }
-
-        if (!isArray(key)) {
-            //short-circuit everything else
-            lang = get(key);
-            if (lang) {
-                return lang;
-            }
-            key = [key];
-        }
-
-        //pick the language from the array
-        //try ['en-au', 'en-gb'] as 'en-au', 'en-gb', 'en', as in move through the list trying each
-        //substring from most specific to least, but move to the next array item if it's a more specific variant than the current root
-        while (i < key.length) {
-            split = normalizeLanguage(key[i]).split('-');
-            j = split.length;
-            next = normalizeLanguage(key[i + 1]);
-            next = next ? next.split('-') : null;
-            while (j > 0) {
-                lang = get(split.slice(0, j).join('-'));
-                if (lang) {
-                    return lang;
-                }
-                if (next && next.length >= j && compareArrays(split, next, true) >= j - 1) {
-                    //the next array item is better than a shallower substring of this one
-                    break;
-                }
-                j--;
-            }
-            i++;
-        }
-        return moment.fn._lang;
-    }
-
     /************************************
         Formatting
     ************************************/
@@ -4224,9 +4086,9 @@ require.register("moment-moment/moment.js", function(exports, require, module){
 
     function removeFormattingTokens(input) {
         if (input.match(/\[[\s\S]/)) {
-            return input.replace(/^\[|\]$/g, "");
+            return input.replace(/^\[|\]$/g, '');
         }
-        return input.replace(/\\/g, "");
+        return input.replace(/\\/g, '');
     }
 
     function makeFormatFunction(format) {
@@ -4241,7 +4103,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         }
 
         return function (mom) {
-            var output = "";
+            var output = '';
             for (i = 0; i < length; i++) {
                 output += array[i] instanceof Function ? array[i].call(mom, format) : array[i];
             }
@@ -4251,12 +4113,11 @@ require.register("moment-moment/moment.js", function(exports, require, module){
 
     // format date using native date object
     function formatMoment(m, format) {
-
         if (!m.isValid()) {
-            return m.lang().invalidDate();
+            return m.localeData().invalidDate();
         }
 
-        format = expandFormat(format, m.lang());
+        format = expandFormat(format, m.localeData());
 
         if (!formatFunctions[format]) {
             formatFunctions[format] = makeFormatFunction(format);
@@ -4265,11 +4126,11 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         return formatFunctions[format](m);
     }
 
-    function expandFormat(format, lang) {
+    function expandFormat(format, locale) {
         var i = 5;
 
         function replaceLongDateFormatTokens(input) {
-            return lang.longDateFormat(input) || input;
+            return locale.longDateFormat(input) || input;
         }
 
         localFormattingTokens.lastIndex = 0;
@@ -4310,13 +4171,19 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         case 'ggggg':
             return strict ? parseTokenSixDigits : parseTokenOneToSixDigits;
         case 'S':
-            if (strict) { return parseTokenOneDigit; }
+            if (strict) {
+                return parseTokenOneDigit;
+            }
             /* falls through */
         case 'SS':
-            if (strict) { return parseTokenTwoDigits; }
+            if (strict) {
+                return parseTokenTwoDigits;
+            }
             /* falls through */
         case 'SSS':
-            if (strict) { return parseTokenThreeDigits; }
+            if (strict) {
+                return parseTokenThreeDigits;
+            }
             /* falls through */
         case 'DDD':
             return parseTokenOneToThreeDigits;
@@ -4328,7 +4195,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
             return parseTokenWord;
         case 'a':
         case 'A':
-            return getLangDefinition(config._l)._meridiemParse;
+            return config._locale._meridiemParse;
         case 'X':
             return parseTokenTimestampMs;
         case 'Z':
@@ -4365,13 +4232,13 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         case 'Do':
             return parseTokenOrdinal;
         default :
-            a = new RegExp(regexpEscape(unescapeFormat(token.replace('\\', '')), "i"));
+            a = new RegExp(regexpEscape(unescapeFormat(token.replace('\\', '')), 'i'));
             return a;
         }
     }
 
     function timezoneMinutesFromString(string) {
-        string = string || "";
+        string = string || '';
         var possibleTzMatches = (string.match(parseTokenTimezone) || []),
             tzChunk = possibleTzMatches[possibleTzMatches.length - 1] || [],
             parts = (tzChunk + '').match(parseTimezoneChunker) || ['-', 0, 0],
@@ -4400,7 +4267,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
             break;
         case 'MMM' : // fall through to MMMM
         case 'MMMM' :
-            a = getLangDefinition(config._l).monthsParse(input);
+            a = config._locale.monthsParse(input);
             // if we didn't find a month name, mark the date as invalid.
             if (a != null) {
                 datePartArray[MONTH] = a;
@@ -4440,7 +4307,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         // AM / PM
         case 'a' : // fall through to A
         case 'A' :
-            config._isPm = getLangDefinition(config._l).isPM(input);
+            config._isPm = config._locale.isPM(input);
             break;
         // 24 HOUR
         case 'H' : // fall through to hh
@@ -4480,7 +4347,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         case 'dd':
         case 'ddd':
         case 'dddd':
-            a = getLangDefinition(config._l).weekdaysParse(input);
+            a = config._locale.weekdaysParse(input);
             // if we didn't get a weekday name, mark the date as invalid
             if (a != null) {
                 config._w = config._w || {};
@@ -4516,7 +4383,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
     }
 
     function dayOfYearFromWeekInfo(config) {
-        var w, weekYear, week, weekday, dow, doy, temp, lang;
+        var w, weekYear, week, weekday, dow, doy, temp;
 
         w = config._w;
         if (w.GG != null || w.W != null || w.E != null) {
@@ -4531,9 +4398,8 @@ require.register("moment-moment/moment.js", function(exports, require, module){
             week = dfl(w.W, 1);
             weekday = dfl(w.E, 1);
         } else {
-            lang = getLangDefinition(config._l);
-            dow = lang._week.dow;
-            doy = lang._week.doy;
+            dow = config._locale._week.dow;
+            doy = config._locale._week.doy;
 
             weekYear = dfl(w.gg, config._a[YEAR], weekOfYear(moment(), dow, doy).year);
             week = dfl(w.w, 1);
@@ -4647,7 +4513,6 @@ require.register("moment-moment/moment.js", function(exports, require, module){
 
     // date from string and format string
     function makeDateFromStringAndFormat(config) {
-
         if (config._f === moment.ISO_8601) {
             parseISO(config);
             return;
@@ -4657,13 +4522,12 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         config._pf.empty = true;
 
         // This array is used to make a Date, either with `new Date` or `Date.UTC`
-        var lang = getLangDefinition(config._l),
-            string = '' + config._i,
+        var string = '' + config._i,
             i, parsedInput, tokens, token, skipped,
             stringLength = string.length,
             totalParsedInputLength = 0;
 
-        tokens = expandFormat(config._f, lang).match(formattingTokens) || [];
+        tokens = expandFormat(config._f, config._locale).match(formattingTokens) || [];
 
         for (i = 0; i < tokens.length; i++) {
             token = tokens[i];
@@ -4738,7 +4602,10 @@ require.register("moment-moment/moment.js", function(exports, require, module){
 
         for (i = 0; i < config._f.length; i++) {
             currentScore = 0;
-            tempConfig = extend({}, config);
+            tempConfig = copyConfig({}, config);
+            if (config._useUTC != null) {
+                tempConfig._useUTC = config._useUTC;
+            }
             tempConfig._pf = defaultParsingFlags();
             tempConfig._f = config._f[i];
             makeDateFromStringAndFormat(tempConfig);
@@ -4774,8 +4641,8 @@ require.register("moment-moment/moment.js", function(exports, require, module){
             config._pf.iso = true;
             for (i = 0, l = isoDates.length; i < l; i++) {
                 if (isoDates[i][1].exec(string)) {
-                    // match[5] should be "T" or undefined
-                    config._f = isoDates[i][0] + (match[6] || " ");
+                    // match[5] should be 'T' or undefined
+                    config._f = isoDates[i][0] + (match[6] || ' ');
                     break;
                 }
             }
@@ -4786,7 +4653,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
                 }
             }
             if (string.match(parseTokenTimezone)) {
-                config._f += "Z";
+                config._f += 'Z';
             }
             makeDateFromStringAndFormat(config);
         } else {
@@ -4803,21 +4670,29 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         }
     }
 
-    function makeDateFromInput(config) {
-        var input = config._i,
-            matched = aspNetJsonRegex.exec(input);
+    function map(arr, fn) {
+        var res = [], i;
+        for (i = 0; i < arr.length; ++i) {
+            res.push(fn(arr[i], i));
+        }
+        return res;
+    }
 
+    function makeDateFromInput(config) {
+        var input = config._i, matched;
         if (input === undefined) {
             config._d = new Date();
-        } else if (matched) {
+        } else if (isDate(input)) {
+            config._d = new Date(+input);
+        } else if ((matched = aspNetJsonRegex.exec(input)) !== null) {
             config._d = new Date(+matched[1]);
         } else if (typeof input === 'string') {
             makeDateFromString(config);
         } else if (isArray(input)) {
-            config._a = input.slice(0);
+            config._a = map(input.slice(0), function (obj) {
+                return parseInt(obj, 10);
+            });
             dateFromConfig(config);
-        } else if (isDate(input)) {
-            config._d = new Date(+input);
         } else if (typeof(input) === 'object') {
             dateFromObject(config);
         } else if (typeof(input) === 'number') {
@@ -4848,13 +4723,13 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         return date;
     }
 
-    function parseWeekday(input, language) {
+    function parseWeekday(input, locale) {
         if (typeof input === 'string') {
             if (!isNaN(input)) {
                 input = parseInt(input, 10);
             }
             else {
-                input = language.weekdaysParse(input);
+                input = locale.weekdaysParse(input);
                 if (typeof input !== 'number') {
                     return null;
                 }
@@ -4869,29 +4744,33 @@ require.register("moment-moment/moment.js", function(exports, require, module){
 
 
     // helper function for moment.fn.from, moment.fn.fromNow, and moment.duration.fn.humanize
-    function substituteTimeAgo(string, number, withoutSuffix, isFuture, lang) {
-        return lang.relativeTime(number || 1, !!withoutSuffix, string, isFuture);
+    function substituteTimeAgo(string, number, withoutSuffix, isFuture, locale) {
+        return locale.relativeTime(number || 1, !!withoutSuffix, string, isFuture);
     }
 
-    function relativeTime(milliseconds, withoutSuffix, lang) {
-        var seconds = round(Math.abs(milliseconds) / 1000),
-            minutes = round(seconds / 60),
-            hours = round(minutes / 60),
-            days = round(hours / 24),
-            years = round(days / 365),
-            args = seconds < relativeTimeThresholds.s  && ['s', seconds] ||
+    function relativeTime(posNegDuration, withoutSuffix, locale) {
+        var duration = moment.duration(posNegDuration).abs(),
+            seconds = round(duration.as('s')),
+            minutes = round(duration.as('m')),
+            hours = round(duration.as('h')),
+            days = round(duration.as('d')),
+            months = round(duration.as('M')),
+            years = round(duration.as('y')),
+
+            args = seconds < relativeTimeThresholds.s && ['s', seconds] ||
                 minutes === 1 && ['m'] ||
                 minutes < relativeTimeThresholds.m && ['mm', minutes] ||
                 hours === 1 && ['h'] ||
                 hours < relativeTimeThresholds.h && ['hh', hours] ||
                 days === 1 && ['d'] ||
-                days <= relativeTimeThresholds.dd && ['dd', days] ||
-                days <= relativeTimeThresholds.dm && ['M'] ||
-                days < relativeTimeThresholds.dy && ['MM', round(days / 30)] ||
+                days < relativeTimeThresholds.d && ['dd', days] ||
+                months === 1 && ['M'] ||
+                months < relativeTimeThresholds.M && ['MM', months] ||
                 years === 1 && ['y'] || ['yy', years];
+
         args[2] = withoutSuffix;
-        args[3] = milliseconds > 0;
-        args[4] = lang;
+        args[3] = +posNegDuration > 0;
+        args[4] = locale;
         return substituteTimeAgo.apply({}, args);
     }
 
@@ -4922,7 +4801,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
             daysToDayOfWeek += 7;
         }
 
-        adjustedMoment = moment(mom).add('d', daysToDayOfWeek);
+        adjustedMoment = moment(mom).add(daysToDayOfWeek, 'd');
         return {
             week: Math.ceil(adjustedMoment.dayOfYear() / 7),
             year: adjustedMoment.year()
@@ -4952,18 +4831,18 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         var input = config._i,
             format = config._f;
 
+        config._locale = config._locale || moment.localeData(config._l);
+
         if (input === null || (format === undefined && input === '')) {
             return moment.invalid({nullInput: true});
         }
 
         if (typeof input === 'string') {
-            config._i = input = getLangDefinition().preparse(input);
+            config._i = input = config._locale.preparse(input);
         }
 
         if (moment.isMoment(input)) {
-            config = cloneMoment(input);
-
-            config._d = new Date(+input._d);
+            return new Moment(input, true);
         } else if (format) {
             if (isArray(format)) {
                 makeDateFromStringAndArray(config);
@@ -4977,12 +4856,12 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         return new Moment(config);
     }
 
-    moment = function (input, format, lang, strict) {
+    moment = function (input, format, locale, strict) {
         var c;
 
-        if (typeof(lang) === "boolean") {
-            strict = lang;
-            lang = undefined;
+        if (typeof(locale) === 'boolean') {
+            strict = locale;
+            locale = undefined;
         }
         // object construction must be done this way.
         // https://github.com/moment/moment/issues/1423
@@ -4990,7 +4869,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         c._isAMomentObject = true;
         c._i = input;
         c._f = format;
-        c._l = lang;
+        c._l = locale;
         c._strict = strict;
         c._isUTC = false;
         c._pf = defaultParsingFlags();
@@ -5001,13 +4880,14 @@ require.register("moment-moment/moment.js", function(exports, require, module){
     moment.suppressDeprecationWarnings = false;
 
     moment.createFromInputFallback = deprecate(
-            "moment construction falls back to js Date. This is " +
-            "discouraged and will be removed in upcoming major " +
-            "release. Please refer to " +
-            "https://github.com/moment/moment/issues/1407 for more info.",
-            function (config) {
-        config._d = new Date(config._i);
-    });
+        'moment construction falls back to js Date. This is ' +
+        'discouraged and will be removed in upcoming major ' +
+        'release. Please refer to ' +
+        'https://github.com/moment/moment/issues/1407 for more info.',
+        function (config) {
+            config._d = new Date(config._i);
+        }
+    );
 
     // Pick a moment m from moments so that m[fn](other) is true for all
     // other. This relies on the function fn to be transitive.
@@ -5044,12 +4924,12 @@ require.register("moment-moment/moment.js", function(exports, require, module){
     };
 
     // creating with utc
-    moment.utc = function (input, format, lang, strict) {
+    moment.utc = function (input, format, locale, strict) {
         var c;
 
-        if (typeof(lang) === "boolean") {
-            strict = lang;
-            lang = undefined;
+        if (typeof(locale) === 'boolean') {
+            strict = locale;
+            locale = undefined;
         }
         // object construction must be done this way.
         // https://github.com/moment/moment/issues/1423
@@ -5057,7 +4937,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         c._isAMomentObject = true;
         c._useUTC = true;
         c._isUTC = true;
-        c._l = lang;
+        c._l = locale;
         c._i = input;
         c._f = format;
         c._strict = strict;
@@ -5078,7 +4958,8 @@ require.register("moment-moment/moment.js", function(exports, require, module){
             match = null,
             sign,
             ret,
-            parseIso;
+            parseIso,
+            diffRes;
 
         if (moment.isDuration(input)) {
             duration = {
@@ -5094,7 +4975,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
                 duration.milliseconds = input;
             }
         } else if (!!(match = aspNetTimeSpanJsonRegex.exec(input))) {
-            sign = (match[1] === "-") ? -1 : 1;
+            sign = (match[1] === '-') ? -1 : 1;
             duration = {
                 y: 0,
                 d: toInt(match[DATE]) * sign,
@@ -5104,7 +4985,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
                 ms: toInt(match[MILLISECOND]) * sign
             };
         } else if (!!(match = isoDurationRegex.exec(input))) {
-            sign = (match[1] === "-") ? -1 : 1;
+            sign = (match[1] === '-') ? -1 : 1;
             parseIso = function (inp) {
                 // We'd normally use ~~inp for this, but unfortunately it also
                 // converts floats to ints.
@@ -5122,12 +5003,19 @@ require.register("moment-moment/moment.js", function(exports, require, module){
                 s: parseIso(match[7]),
                 w: parseIso(match[8])
             };
+        } else if (typeof duration === 'object' &&
+                ('from' in duration || 'to' in duration)) {
+            diffRes = momentsDifference(moment(duration.from), moment(duration.to));
+
+            duration = {};
+            duration.ms = diffRes.milliseconds;
+            duration.M = diffRes.months;
         }
 
         ret = new Duration(duration);
 
-        if (moment.isDuration(input) && input.hasOwnProperty('_lang')) {
-            ret._lang = input._lang;
+        if (moment.isDuration(input) && hasOwnProp(input, '_locale')) {
+            ret._locale = input._locale;
         }
 
         return ret;
@@ -5151,46 +5039,99 @@ require.register("moment-moment/moment.js", function(exports, require, module){
     moment.updateOffset = function () {};
 
     // This function allows you to set a threshold for relative time strings
-    moment.relativeTimeThreshold = function(threshold, limit) {
-      if (relativeTimeThresholds[threshold] === undefined) {
-        return false;
-      }
-      relativeTimeThresholds[threshold] = limit;
-      return true;
+    moment.relativeTimeThreshold = function (threshold, limit) {
+        if (relativeTimeThresholds[threshold] === undefined) {
+            return false;
+        }
+        if (limit === undefined) {
+            return relativeTimeThresholds[threshold];
+        }
+        relativeTimeThresholds[threshold] = limit;
+        return true;
     };
 
-    // This function will load languages and then set the global language.  If
+    moment.lang = deprecate(
+        'moment.lang is deprecated. Use moment.locale instead.',
+        function (key, value) {
+            return moment.locale(key, value);
+        }
+    );
+
+    // This function will load locale and then set the global locale.  If
     // no arguments are passed in, it will simply return the current global
-    // language key.
-    moment.lang = function (key, values) {
-        var r;
-        if (!key) {
-            return moment.fn._lang._abbr;
+    // locale key.
+    moment.locale = function (key, values) {
+        var data;
+        if (key) {
+            if (typeof(values) !== 'undefined') {
+                data = moment.defineLocale(key, values);
+            }
+            else {
+                data = moment.localeData(key);
+            }
+
+            if (data) {
+                moment.duration._locale = moment._locale = data;
+            }
         }
-        if (values) {
-            loadLang(normalizeLanguage(key), values);
-        } else if (values === null) {
-            unloadLang(key);
-            key = 'en';
-        } else if (!languages[key]) {
-            getLangDefinition(key);
-        }
-        r = moment.duration.fn._lang = moment.fn._lang = getLangDefinition(key);
-        return r._abbr;
+
+        return moment._locale._abbr;
     };
 
-    // returns language data
-    moment.langData = function (key) {
-        if (key && key._lang && key._lang._abbr) {
-            key = key._lang._abbr;
+    moment.defineLocale = function (name, values) {
+        if (values !== null) {
+            values.abbr = name;
+            if (!locales[name]) {
+                locales[name] = new Locale();
+            }
+            locales[name].set(values);
+
+            // backwards compat for now: also set the locale
+            moment.locale(name);
+
+            return locales[name];
+        } else {
+            // useful for testing
+            delete locales[name];
+            return null;
         }
-        return getLangDefinition(key);
+    };
+
+    moment.langData = deprecate(
+        'moment.langData is deprecated. Use moment.localeData instead.',
+        function (key) {
+            return moment.localeData(key);
+        }
+    );
+
+    // returns locale data
+    moment.localeData = function (key) {
+        var locale;
+
+        if (key && key._locale && key._locale._abbr) {
+            key = key._locale._abbr;
+        }
+
+        if (!key) {
+            return moment._locale;
+        }
+
+        if (!isArray(key)) {
+            //short-circuit everything else
+            locale = loadLocale(key);
+            if (locale) {
+                return locale;
+            }
+            key = [key];
+        }
+
+        return chooseLocale(key);
     };
 
     // compare moment object
     moment.isMoment = function (obj) {
         return obj instanceof Moment ||
-            (obj != null &&  obj.hasOwnProperty('_isAMomentObject'));
+            (obj != null && hasOwnProp(obj, '_isAMomentObject'));
     };
 
     // for typechecking Duration objects
@@ -5246,7 +5187,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         },
 
         toString : function () {
-            return this.clone().lang('en').format("ddd MMM DD YYYY HH:mm:ss [GMT]ZZ");
+            return this.clone().locale('en').format('ddd MMM DD YYYY HH:mm:ss [GMT]ZZ');
         },
 
         toDate : function () {
@@ -5280,7 +5221,6 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         },
 
         isDSTShifted : function () {
-
             if (this._a) {
                 return this.isValid() && compareArrays(this._a, (this._isUTC ? moment.utc(this._a) : moment(this._a)).toArray()) > 0;
             }
@@ -5296,53 +5236,35 @@ require.register("moment-moment/moment.js", function(exports, require, module){
             return this._pf.overflow;
         },
 
-        utc : function () {
-            return this.zone(0);
+        utc : function (keepLocalTime) {
+            return this.zone(0, keepLocalTime);
         },
 
-        local : function () {
-            this.zone(0);
-            this._isUTC = false;
+        local : function (keepLocalTime) {
+            if (this._isUTC) {
+                this.zone(0, keepLocalTime);
+                this._isUTC = false;
+
+                if (keepLocalTime) {
+                    this.add(this._dateTzOffset(), 'm');
+                }
+            }
             return this;
         },
 
         format : function (inputString) {
             var output = formatMoment(this, inputString || moment.defaultFormat);
-            return this.lang().postformat(output);
+            return this.localeData().postformat(output);
         },
 
-        add : function (input, val) {
-            var dur;
-            // switch args to support add('s', 1) and add(1, 's')
-            if (typeof input === 'string' && typeof val === 'string') {
-                dur = moment.duration(isNaN(+val) ? +input : +val, isNaN(+val) ? val : input);
-            } else if (typeof input === 'string') {
-                dur = moment.duration(+val, input);
-            } else {
-                dur = moment.duration(input, val);
-            }
-            addOrSubtractDurationFromMoment(this, dur, 1);
-            return this;
-        },
+        add : createAdder(1, 'add'),
 
-        subtract : function (input, val) {
-            var dur;
-            // switch args to support subtract('s', 1) and subtract(1, 's')
-            if (typeof input === 'string' && typeof val === 'string') {
-                dur = moment.duration(isNaN(+val) ? +input : +val, isNaN(+val) ? val : input);
-            } else if (typeof input === 'string') {
-                dur = moment.duration(+val, input);
-            } else {
-                dur = moment.duration(input, val);
-            }
-            addOrSubtractDurationFromMoment(this, dur, -1);
-            return this;
-        },
+        subtract : createAdder(-1, 'subtract'),
 
         diff : function (input, units, asFloat) {
             var that = makeAs(input, this),
                 zoneDiff = (this.zone() - that.zone()) * 6e4,
-                diff, output;
+                diff, output, daysAdjust;
 
             units = normalizeUnits(units);
 
@@ -5353,11 +5275,12 @@ require.register("moment-moment/moment.js", function(exports, require, module){
                 output = ((this.year() - that.year()) * 12) + (this.month() - that.month());
                 // adjust by taking difference in days, average number of days
                 // and dst in the given months.
-                output += ((this - moment(this).startOf('month')) -
-                        (that - moment(that).startOf('month'))) / diff;
+                daysAdjust = (this - moment(this).startOf('month')) -
+                    (that - moment(that).startOf('month'));
                 // same as above but with zones, to negate all dst
-                output -= ((this.zone() - moment(this).startOf('month').zone()) -
-                        (that.zone() - moment(that).startOf('month').zone())) * 6e4 / diff;
+                daysAdjust -= ((this.zone() - moment(this).startOf('month').zone()) -
+                        (that.zone() - moment(that).startOf('month').zone())) * 6e4;
+                output += daysAdjust / diff;
                 if (units === 'year') {
                     output = output / 12;
                 }
@@ -5374,7 +5297,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         },
 
         from : function (time, withoutSuffix) {
-            return moment.duration(this.diff(time)).lang(this.lang()._abbr).humanize(!withoutSuffix);
+            return moment.duration({to: this, from: time}).locale(this.locale()).humanize(!withoutSuffix);
         },
 
         fromNow : function (withoutSuffix) {
@@ -5393,7 +5316,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
                     diff < 1 ? 'sameDay' :
                     diff < 2 ? 'nextDay' :
                     diff < 7 ? 'nextWeek' : 'sameElse';
-            return this.format(this.lang().calendar(format, this));
+            return this.format(this.localeData().calendar(format, this));
         },
 
         isLeapYear : function () {
@@ -5408,8 +5331,8 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         day : function (input) {
             var day = this._isUTC ? this._d.getUTCDay() : this._d.getDay();
             if (input != null) {
-                input = parseWeekday(input, this.lang());
-                return this.add({ d : input - day });
+                input = parseWeekday(input, this.localeData());
+                return this.add(input - day, 'd');
             } else {
                 return day;
             }
@@ -5417,7 +5340,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
 
         month : makeAccessor('Month', true),
 
-        startOf: function (units) {
+        startOf : function (units) {
             units = normalizeUnits(units);
             // the following switch intentionally omits break keywords
             // to utilize falling through the cases.
@@ -5462,26 +5385,41 @@ require.register("moment-moment/moment.js", function(exports, require, module){
 
         endOf: function (units) {
             units = normalizeUnits(units);
-            return this.startOf(units).add((units === 'isoWeek' ? 'week' : units), 1).subtract('ms', 1);
+            return this.startOf(units).add(1, (units === 'isoWeek' ? 'week' : units)).subtract(1, 'ms');
         },
 
         isAfter: function (input, units) {
-            units = typeof units !== 'undefined' ? units : 'millisecond';
-            return +this.clone().startOf(units) > +moment(input).startOf(units);
+            units = normalizeUnits(typeof units !== 'undefined' ? units : 'millisecond');
+            if (units === 'millisecond') {
+                input = moment.isMoment(input) ? input : moment(input);
+                return +this > +input;
+            } else {
+                return +this.clone().startOf(units) > +moment(input).startOf(units);
+            }
         },
 
         isBefore: function (input, units) {
-            units = typeof units !== 'undefined' ? units : 'millisecond';
-            return +this.clone().startOf(units) < +moment(input).startOf(units);
+            units = normalizeUnits(typeof units !== 'undefined' ? units : 'millisecond');
+            if (units === 'millisecond') {
+                input = moment.isMoment(input) ? input : moment(input);
+                return +this < +input;
+            } else {
+                return +this.clone().startOf(units) < +moment(input).startOf(units);
+            }
         },
 
         isSame: function (input, units) {
-            units = units || 'ms';
-            return +this.clone().startOf(units) === +makeAs(input, this).startOf(units);
+            units = normalizeUnits(units || 'millisecond');
+            if (units === 'millisecond') {
+                input = moment.isMoment(input) ? input : moment(input);
+                return +this === +input;
+            } else {
+                return +this.clone().startOf(units) === +makeAs(input, this).startOf(units);
+            }
         },
 
         min: deprecate(
-                 "moment().min is deprecated, use moment.min instead. https://github.com/moment/moment/issues/1548",
+                 'moment().min is deprecated, use moment.min instead. https://github.com/moment/moment/issues/1548',
                  function (other) {
                      other = moment.apply(null, arguments);
                      return other < this ? this : other;
@@ -5489,36 +5427,43 @@ require.register("moment-moment/moment.js", function(exports, require, module){
          ),
 
         max: deprecate(
-                "moment().max is deprecated, use moment.max instead. https://github.com/moment/moment/issues/1548",
+                'moment().max is deprecated, use moment.max instead. https://github.com/moment/moment/issues/1548',
                 function (other) {
                     other = moment.apply(null, arguments);
                     return other > this ? this : other;
                 }
         ),
 
-        // keepTime = true means only change the timezone, without affecting
-        // the local hour. So 5:31:26 +0300 --[zone(2, true)]--> 5:31:26 +0200
-        // It is possible that 5:31:26 doesn't exist int zone +0200, so we
-        // adjust the time as needed, to be valid.
+        // keepLocalTime = true means only change the timezone, without
+        // affecting the local hour. So 5:31:26 +0300 --[zone(2, true)]-->
+        // 5:31:26 +0200 It is possible that 5:31:26 doesn't exist int zone
+        // +0200, so we adjust the time as needed, to be valid.
         //
         // Keeping the time actually adds/subtracts (one hour)
         // from the actual represented time. That is why we call updateOffset
         // a second time. In case it wants us to change the offset again
         // _changeInProgress == true case, then we have to adjust, because
         // there is no such time in the given timezone.
-        zone : function (input, keepTime) {
-            var offset = this._offset || 0;
+        zone : function (input, keepLocalTime) {
+            var offset = this._offset || 0,
+                localAdjust;
             if (input != null) {
-                if (typeof input === "string") {
+                if (typeof input === 'string') {
                     input = timezoneMinutesFromString(input);
                 }
                 if (Math.abs(input) < 16) {
                     input = input * 60;
                 }
+                if (!this._isUTC && keepLocalTime) {
+                    localAdjust = this._dateTzOffset();
+                }
                 this._offset = input;
                 this._isUTC = true;
+                if (localAdjust != null) {
+                    this.subtract(localAdjust, 'm');
+                }
                 if (offset !== input) {
-                    if (!keepTime || this._changeInProgress) {
+                    if (!keepLocalTime || this._changeInProgress) {
                         addOrSubtractDurationFromMoment(this,
                                 moment.duration(offset - input, 'm'), 1, false);
                     } else if (!this._changeInProgress) {
@@ -5528,17 +5473,17 @@ require.register("moment-moment/moment.js", function(exports, require, module){
                     }
                 }
             } else {
-                return this._isUTC ? offset : this._d.getTimezoneOffset();
+                return this._isUTC ? offset : this._dateTzOffset();
             }
             return this;
         },
 
         zoneAbbr : function () {
-            return this._isUTC ? "UTC" : "";
+            return this._isUTC ? 'UTC' : '';
         },
 
         zoneName : function () {
-            return this._isUTC ? "Coordinated Universal Time" : "";
+            return this._isUTC ? 'Coordinated Universal Time' : '';
         },
 
         parseZone : function () {
@@ -5567,7 +5512,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
 
         dayOfYear : function (input) {
             var dayOfYear = round((moment(this).startOf('day') - moment(this).startOf('year')) / 864e5) + 1;
-            return input == null ? dayOfYear : this.add("d", (input - dayOfYear));
+            return input == null ? dayOfYear : this.add((input - dayOfYear), 'd');
         },
 
         quarter : function (input) {
@@ -5575,28 +5520,28 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         },
 
         weekYear : function (input) {
-            var year = weekOfYear(this, this.lang()._week.dow, this.lang()._week.doy).year;
-            return input == null ? year : this.add("y", (input - year));
+            var year = weekOfYear(this, this.localeData()._week.dow, this.localeData()._week.doy).year;
+            return input == null ? year : this.add((input - year), 'y');
         },
 
         isoWeekYear : function (input) {
             var year = weekOfYear(this, 1, 4).year;
-            return input == null ? year : this.add("y", (input - year));
+            return input == null ? year : this.add((input - year), 'y');
         },
 
         week : function (input) {
-            var week = this.lang().week(this);
-            return input == null ? week : this.add("d", (input - week) * 7);
+            var week = this.localeData().week(this);
+            return input == null ? week : this.add((input - week) * 7, 'd');
         },
 
         isoWeek : function (input) {
             var week = weekOfYear(this, 1, 4).week;
-            return input == null ? week : this.add("d", (input - week) * 7);
+            return input == null ? week : this.add((input - week) * 7, 'd');
         },
 
         weekday : function (input) {
-            var weekday = (this.day() + 7 - this.lang()._week.dow) % 7;
-            return input == null ? weekday : this.add("d", input - weekday);
+            var weekday = (this.day() + 7 - this.localeData()._week.dow) % 7;
+            return input == null ? weekday : this.add(input - weekday, 'd');
         },
 
         isoWeekday : function (input) {
@@ -5611,7 +5556,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         },
 
         weeksInYear : function () {
-            var weekInfo = this._lang._week;
+            var weekInfo = this.localeData()._week;
             return weeksInYear(this.year(), weekInfo.dow, weekInfo.doy);
         },
 
@@ -5628,16 +5573,42 @@ require.register("moment-moment/moment.js", function(exports, require, module){
             return this;
         },
 
-        // If passed a language key, it will set the language for this
-        // instance.  Otherwise, it will return the language configuration
+        // If passed a locale key, it will set the locale for this
+        // instance.  Otherwise, it will return the locale configuration
         // variables for this instance.
-        lang : function (key) {
+        locale : function (key) {
+            var newLocaleData;
+
             if (key === undefined) {
-                return this._lang;
+                return this._locale._abbr;
             } else {
-                this._lang = getLangDefinition(key);
+                newLocaleData = moment.localeData(key);
+                if (newLocaleData != null) {
+                    this._locale = newLocaleData;
+                }
                 return this;
             }
+        },
+
+        lang : deprecate(
+            'moment().lang() is deprecated. Use moment().localeData() instead.',
+            function (key) {
+                if (key === undefined) {
+                    return this.localeData();
+                } else {
+                    return this.locale(key);
+                }
+            }
+        ),
+
+        localeData : function () {
+            return this._locale;
+        },
+
+        _dateTzOffset : function () {
+            // On Firefox.24 Date#getTimezoneOffset returns a floating point.
+            // https://github.com/moment/moment/pull/1871
+            return Math.round(this._d.getTimezoneOffset() / 15) * 15;
         }
     });
 
@@ -5646,7 +5617,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
 
         // TODO: Move this out of here!
         if (typeof value === 'string') {
-            value = mom.lang().monthsParse(value);
+            value = mom.localeData().monthsParse(value);
             // TODO: Another silent failure?
             if (typeof value !== 'number') {
                 return mom;
@@ -5693,9 +5664,9 @@ require.register("moment-moment/moment.js", function(exports, require, module){
     moment.fn.hour = moment.fn.hours = makeAccessor('Hours', true);
     // moment.fn.month is defined separately
     moment.fn.date = makeAccessor('Date', true);
-    moment.fn.dates = deprecate("dates accessor is deprecated. Use date instead.", makeAccessor('Date', true));
+    moment.fn.dates = deprecate('dates accessor is deprecated. Use date instead.', makeAccessor('Date', true));
     moment.fn.year = makeAccessor('FullYear', true);
-    moment.fn.years = deprecate("years accessor is deprecated. Use year instead.", makeAccessor('FullYear', true));
+    moment.fn.years = deprecate('years accessor is deprecated. Use year instead.', makeAccessor('FullYear', true));
 
     // add plural methods
     moment.fn.days = moment.fn.day;
@@ -5712,6 +5683,17 @@ require.register("moment-moment/moment.js", function(exports, require, module){
     ************************************/
 
 
+    function daysToYears (days) {
+        // 400 years have 146097 days (taking into account leap year rules)
+        return days * 400 / 146097;
+    }
+
+    function yearsToDays (years) {
+        // years * 365 + absRound(years / 4) -
+        //     absRound(years / 100) + absRound(years / 400);
+        return years * 146097 / 400;
+    }
+
     extend(moment.duration.fn = Duration.prototype, {
 
         _bubble : function () {
@@ -5719,7 +5701,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
                 days = this._days,
                 months = this._months,
                 data = this._data,
-                seconds, minutes, hours, years;
+                seconds, minutes, hours, years = 0;
 
             // The following code bubbles up values, see the tests for
             // examples of what that means.
@@ -5735,13 +5717,38 @@ require.register("moment-moment/moment.js", function(exports, require, module){
             data.hours = hours % 24;
 
             days += absRound(hours / 24);
-            data.days = days % 30;
 
+            // Accurately convert days to years, assume start from year 0.
+            years = absRound(daysToYears(days));
+            days -= absRound(yearsToDays(years));
+
+            // 30 days to a month
+            // TODO (iskren): Use anchor date (like 1st Jan) to compute this.
             months += absRound(days / 30);
-            data.months = months % 12;
+            days %= 30;
 
-            years = absRound(months / 12);
+            // 12 months -> 1 year
+            years += absRound(months / 12);
+            months %= 12;
+
+            data.days = days;
+            data.months = months;
             data.years = years;
+        },
+
+        abs : function () {
+            this._milliseconds = Math.abs(this._milliseconds);
+            this._days = Math.abs(this._days);
+            this._months = Math.abs(this._months);
+
+            this._data.milliseconds = Math.abs(this._data.milliseconds);
+            this._data.seconds = Math.abs(this._data.seconds);
+            this._data.minutes = Math.abs(this._data.minutes);
+            this._data.hours = Math.abs(this._data.hours);
+            this._data.months = Math.abs(this._data.months);
+            this._data.years = Math.abs(this._data.years);
+
+            return this;
         },
 
         weeks : function () {
@@ -5756,14 +5763,13 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         },
 
         humanize : function (withSuffix) {
-            var difference = +this,
-                output = relativeTime(difference, !withSuffix, this.lang());
+            var output = relativeTime(this, !withSuffix, this.localeData());
 
             if (withSuffix) {
-                output = this.lang().pastFuture(difference, output);
+                output = this.localeData().pastFuture(+this, output);
             }
 
-            return this.lang().postformat(output);
+            return this.localeData().postformat(output);
         },
 
         add : function (input, val) {
@@ -5797,13 +5803,41 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         },
 
         as : function (units) {
+            var days, months;
             units = normalizeUnits(units);
-            return this['as' + units.charAt(0).toUpperCase() + units.slice(1) + 's']();
+
+            if (units === 'month' || units === 'year') {
+                days = this._days + this._milliseconds / 864e5;
+                months = this._months + daysToYears(days) * 12;
+                return units === 'month' ? months : months / 12;
+            } else {
+                // handle milliseconds separately because of floating point math errors (issue #1867)
+                days = this._days + yearsToDays(this._months / 12);
+                switch (units) {
+                    case 'week': return days / 7 + this._milliseconds / 6048e5;
+                    case 'day': return days + this._milliseconds / 864e5;
+                    case 'hour': return days * 24 + this._milliseconds / 36e5;
+                    case 'minute': return days * 24 * 60 + this._milliseconds / 6e4;
+                    case 'second': return days * 24 * 60 * 60 + this._milliseconds / 1000;
+                    // Math.floor prevents floating point math errors here
+                    case 'millisecond': return Math.floor(days * 24 * 60 * 60 * 1000) + this._milliseconds;
+                    default: throw new Error('Unknown unit ' + units);
+                }
+            }
         },
 
         lang : moment.fn.lang,
+        locale : moment.fn.locale,
 
-        toIsoString : function () {
+        toIsoString : deprecate(
+            'toIsoString() is deprecated. Please use toISOString() instead ' +
+            '(notice the capitals)',
+            function () {
+                return this.toISOString();
+            }
+        ),
+
+        toISOString : function () {
             // inspired by https://github.com/dordille/moment-isoduration/blob/master/moment.isoduration.js
             var years = Math.abs(this.years()),
                 months = Math.abs(this.months()),
@@ -5827,8 +5861,14 @@ require.register("moment-moment/moment.js", function(exports, require, module){
                 (hours ? hours + 'H' : '') +
                 (minutes ? minutes + 'M' : '') +
                 (seconds ? seconds + 'S' : '');
+        },
+
+        localeData : function () {
+            return this._locale;
         }
     });
+
+    moment.duration.fn.toString = moment.duration.fn.toISOString;
 
     function makeDurationGetter(name) {
         moment.duration.fn[name] = function () {
@@ -5836,32 +5876,44 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         };
     }
 
-    function makeDurationAsGetter(name, factor) {
-        moment.duration.fn['as' + name] = function () {
-            return +this / factor;
-        };
-    }
-
     for (i in unitMillisecondFactors) {
-        if (unitMillisecondFactors.hasOwnProperty(i)) {
-            makeDurationAsGetter(i, unitMillisecondFactors[i]);
+        if (hasOwnProp(unitMillisecondFactors, i)) {
             makeDurationGetter(i.toLowerCase());
         }
     }
 
-    makeDurationAsGetter('Weeks', 6048e5);
+    moment.duration.fn.asMilliseconds = function () {
+        return this.as('ms');
+    };
+    moment.duration.fn.asSeconds = function () {
+        return this.as('s');
+    };
+    moment.duration.fn.asMinutes = function () {
+        return this.as('m');
+    };
+    moment.duration.fn.asHours = function () {
+        return this.as('h');
+    };
+    moment.duration.fn.asDays = function () {
+        return this.as('d');
+    };
+    moment.duration.fn.asWeeks = function () {
+        return this.as('weeks');
+    };
     moment.duration.fn.asMonths = function () {
-        return (+this - this.years() * 31536e6) / 2592e6 + this.years() * 12;
+        return this.as('M');
+    };
+    moment.duration.fn.asYears = function () {
+        return this.as('y');
     };
 
-
     /************************************
-        Default Lang
+        Default Locale
     ************************************/
 
 
-    // Set default language, other languages will inherit from English.
-    moment.lang('en', {
+    // Set default locale, other locale will inherit from English.
+    moment.locale('en', {
         ordinal : function (number) {
             var b = number % 10,
                 output = (toInt(number % 100 / 10) === 1) ? 'th' :
@@ -5872,7 +5924,7 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         }
     });
 
-    /* EMBED_LANGUAGES */
+    /* EMBED_LOCALES */
 
     /************************************
         Exposing Moment
@@ -5886,9 +5938,9 @@ require.register("moment-moment/moment.js", function(exports, require, module){
         oldGlobalMoment = globalScope.moment;
         if (shouldDeprecate) {
             globalScope.moment = deprecate(
-                    "Accessing Moment through the global scope is " +
-                    "deprecated, and will be removed in an upcoming " +
-                    "release.",
+                    'Accessing Moment through the global scope is ' +
+                    'deprecated, and will be removed in an upcoming ' +
+                    'release.',
                     moment);
         } else {
             globalScope.moment = moment;
@@ -5898,8 +5950,8 @@ require.register("moment-moment/moment.js", function(exports, require, module){
     // CommonJS module is defined
     if (hasModule) {
         module.exports = moment;
-    } else if (typeof define === "function" && define.amd) {
-        define("moment", function (require, exports, module) {
+    } else if (typeof define === 'function' && define.amd) {
+        define('moment', function (require, exports, module) {
             if (module.config && module.config() && module.config().noGlobal === true) {
                 // release the global variable
                 globalScope.moment = oldGlobalMoment;
@@ -5914,7 +5966,4468 @@ require.register("moment-moment/moment.js", function(exports, require, module){
 }).call(this);
 
 });
-require.register("components-jquery/jquery.js", function(exports, require, module){
+
+require.register("kpwebb~select2@3.4.8", function (exports, module) {
+/*
+Copyright 2012 Igor Vaynberg
+
+Version: 3.4.8 Timestamp: Thu May  1 09:50:32 EDT 2014
+
+This software is licensed under the Apache License, Version 2.0 (the "Apache License") or the GNU
+General Public License version 2 (the "GPL License"). You may choose either license to govern your
+use of this software only upon the condition that you accept all of the terms of either the Apache
+License or the GPL License.
+
+You may obtain a copy of the Apache License and the GPL License at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+    http://www.gnu.org/licenses/gpl-2.0.html
+
+Unless required by applicable law or agreed to in writing, software distributed under the
+Apache License or the GPL License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the Apache License and the GPL License for
+the specific language governing permissions and limitations under the Apache License and the GPL License.
+*/
+(function ($) {
+    if(typeof $.fn.each2 == "undefined") {
+        $.extend($.fn, {
+            /*
+            * 4-10 times faster .each replacement
+            * use it carefully, as it overrides jQuery context of element on each iteration
+            */
+            each2 : function (c) {
+                var j = $([0]), i = -1, l = this.length;
+                while (
+                    ++i < l
+                    && (j.context = j[0] = this[i])
+                    && c.call(j[0], i, j) !== false //"this"=DOM, i=index, j=jQuery object
+                );
+                return this;
+            }
+        });
+    }
+})(jQuery);
+
+(function ($, undefined) {
+    "use strict";
+    /*global document, window, jQuery, console */
+
+    if (window.Select2 !== undefined) {
+        return;
+    }
+
+    var KEY, AbstractSelect2, SingleSelect2, MultiSelect2, nextUid, sizer,
+        lastMousePosition={x:0,y:0}, $document, scrollBarDimensions,
+
+    KEY = {
+        TAB: 9,
+        ENTER: 13,
+        ESC: 27,
+        SPACE: 32,
+        LEFT: 37,
+        UP: 38,
+        RIGHT: 39,
+        DOWN: 40,
+        SHIFT: 16,
+        CTRL: 17,
+        ALT: 18,
+        PAGE_UP: 33,
+        PAGE_DOWN: 34,
+        HOME: 36,
+        END: 35,
+        BACKSPACE: 8,
+        DELETE: 46,
+        isArrow: function (k) {
+            k = k.which ? k.which : k;
+            switch (k) {
+            case KEY.LEFT:
+            case KEY.RIGHT:
+            case KEY.UP:
+            case KEY.DOWN:
+                return true;
+            }
+            return false;
+        },
+        isControl: function (e) {
+            var k = e.which;
+            switch (k) {
+            case KEY.SHIFT:
+            case KEY.CTRL:
+            case KEY.ALT:
+                return true;
+            }
+
+            if (e.metaKey) return true;
+
+            return false;
+        },
+        isFunctionKey: function (k) {
+            k = k.which ? k.which : k;
+            return k >= 112 && k <= 123;
+        }
+    },
+    MEASURE_SCROLLBAR_TEMPLATE = "<div class='select2-measure-scrollbar'></div>",
+
+    DIACRITICS = {"\u24B6":"A","\uFF21":"A","\u00C0":"A","\u00C1":"A","\u00C2":"A","\u1EA6":"A","\u1EA4":"A","\u1EAA":"A","\u1EA8":"A","\u00C3":"A","\u0100":"A","\u0102":"A","\u1EB0":"A","\u1EAE":"A","\u1EB4":"A","\u1EB2":"A","\u0226":"A","\u01E0":"A","\u00C4":"A","\u01DE":"A","\u1EA2":"A","\u00C5":"A","\u01FA":"A","\u01CD":"A","\u0200":"A","\u0202":"A","\u1EA0":"A","\u1EAC":"A","\u1EB6":"A","\u1E00":"A","\u0104":"A","\u023A":"A","\u2C6F":"A","\uA732":"AA","\u00C6":"AE","\u01FC":"AE","\u01E2":"AE","\uA734":"AO","\uA736":"AU","\uA738":"AV","\uA73A":"AV","\uA73C":"AY","\u24B7":"B","\uFF22":"B","\u1E02":"B","\u1E04":"B","\u1E06":"B","\u0243":"B","\u0182":"B","\u0181":"B","\u24B8":"C","\uFF23":"C","\u0106":"C","\u0108":"C","\u010A":"C","\u010C":"C","\u00C7":"C","\u1E08":"C","\u0187":"C","\u023B":"C","\uA73E":"C","\u24B9":"D","\uFF24":"D","\u1E0A":"D","\u010E":"D","\u1E0C":"D","\u1E10":"D","\u1E12":"D","\u1E0E":"D","\u0110":"D","\u018B":"D","\u018A":"D","\u0189":"D","\uA779":"D","\u01F1":"DZ","\u01C4":"DZ","\u01F2":"Dz","\u01C5":"Dz","\u24BA":"E","\uFF25":"E","\u00C8":"E","\u00C9":"E","\u00CA":"E","\u1EC0":"E","\u1EBE":"E","\u1EC4":"E","\u1EC2":"E","\u1EBC":"E","\u0112":"E","\u1E14":"E","\u1E16":"E","\u0114":"E","\u0116":"E","\u00CB":"E","\u1EBA":"E","\u011A":"E","\u0204":"E","\u0206":"E","\u1EB8":"E","\u1EC6":"E","\u0228":"E","\u1E1C":"E","\u0118":"E","\u1E18":"E","\u1E1A":"E","\u0190":"E","\u018E":"E","\u24BB":"F","\uFF26":"F","\u1E1E":"F","\u0191":"F","\uA77B":"F","\u24BC":"G","\uFF27":"G","\u01F4":"G","\u011C":"G","\u1E20":"G","\u011E":"G","\u0120":"G","\u01E6":"G","\u0122":"G","\u01E4":"G","\u0193":"G","\uA7A0":"G","\uA77D":"G","\uA77E":"G","\u24BD":"H","\uFF28":"H","\u0124":"H","\u1E22":"H","\u1E26":"H","\u021E":"H","\u1E24":"H","\u1E28":"H","\u1E2A":"H","\u0126":"H","\u2C67":"H","\u2C75":"H","\uA78D":"H","\u24BE":"I","\uFF29":"I","\u00CC":"I","\u00CD":"I","\u00CE":"I","\u0128":"I","\u012A":"I","\u012C":"I","\u0130":"I","\u00CF":"I","\u1E2E":"I","\u1EC8":"I","\u01CF":"I","\u0208":"I","\u020A":"I","\u1ECA":"I","\u012E":"I","\u1E2C":"I","\u0197":"I","\u24BF":"J","\uFF2A":"J","\u0134":"J","\u0248":"J","\u24C0":"K","\uFF2B":"K","\u1E30":"K","\u01E8":"K","\u1E32":"K","\u0136":"K","\u1E34":"K","\u0198":"K","\u2C69":"K","\uA740":"K","\uA742":"K","\uA744":"K","\uA7A2":"K","\u24C1":"L","\uFF2C":"L","\u013F":"L","\u0139":"L","\u013D":"L","\u1E36":"L","\u1E38":"L","\u013B":"L","\u1E3C":"L","\u1E3A":"L","\u0141":"L","\u023D":"L","\u2C62":"L","\u2C60":"L","\uA748":"L","\uA746":"L","\uA780":"L","\u01C7":"LJ","\u01C8":"Lj","\u24C2":"M","\uFF2D":"M","\u1E3E":"M","\u1E40":"M","\u1E42":"M","\u2C6E":"M","\u019C":"M","\u24C3":"N","\uFF2E":"N","\u01F8":"N","\u0143":"N","\u00D1":"N","\u1E44":"N","\u0147":"N","\u1E46":"N","\u0145":"N","\u1E4A":"N","\u1E48":"N","\u0220":"N","\u019D":"N","\uA790":"N","\uA7A4":"N","\u01CA":"NJ","\u01CB":"Nj","\u24C4":"O","\uFF2F":"O","\u00D2":"O","\u00D3":"O","\u00D4":"O","\u1ED2":"O","\u1ED0":"O","\u1ED6":"O","\u1ED4":"O","\u00D5":"O","\u1E4C":"O","\u022C":"O","\u1E4E":"O","\u014C":"O","\u1E50":"O","\u1E52":"O","\u014E":"O","\u022E":"O","\u0230":"O","\u00D6":"O","\u022A":"O","\u1ECE":"O","\u0150":"O","\u01D1":"O","\u020C":"O","\u020E":"O","\u01A0":"O","\u1EDC":"O","\u1EDA":"O","\u1EE0":"O","\u1EDE":"O","\u1EE2":"O","\u1ECC":"O","\u1ED8":"O","\u01EA":"O","\u01EC":"O","\u00D8":"O","\u01FE":"O","\u0186":"O","\u019F":"O","\uA74A":"O","\uA74C":"O","\u01A2":"OI","\uA74E":"OO","\u0222":"OU","\u24C5":"P","\uFF30":"P","\u1E54":"P","\u1E56":"P","\u01A4":"P","\u2C63":"P","\uA750":"P","\uA752":"P","\uA754":"P","\u24C6":"Q","\uFF31":"Q","\uA756":"Q","\uA758":"Q","\u024A":"Q","\u24C7":"R","\uFF32":"R","\u0154":"R","\u1E58":"R","\u0158":"R","\u0210":"R","\u0212":"R","\u1E5A":"R","\u1E5C":"R","\u0156":"R","\u1E5E":"R","\u024C":"R","\u2C64":"R","\uA75A":"R","\uA7A6":"R","\uA782":"R","\u24C8":"S","\uFF33":"S","\u1E9E":"S","\u015A":"S","\u1E64":"S","\u015C":"S","\u1E60":"S","\u0160":"S","\u1E66":"S","\u1E62":"S","\u1E68":"S","\u0218":"S","\u015E":"S","\u2C7E":"S","\uA7A8":"S","\uA784":"S","\u24C9":"T","\uFF34":"T","\u1E6A":"T","\u0164":"T","\u1E6C":"T","\u021A":"T","\u0162":"T","\u1E70":"T","\u1E6E":"T","\u0166":"T","\u01AC":"T","\u01AE":"T","\u023E":"T","\uA786":"T","\uA728":"TZ","\u24CA":"U","\uFF35":"U","\u00D9":"U","\u00DA":"U","\u00DB":"U","\u0168":"U","\u1E78":"U","\u016A":"U","\u1E7A":"U","\u016C":"U","\u00DC":"U","\u01DB":"U","\u01D7":"U","\u01D5":"U","\u01D9":"U","\u1EE6":"U","\u016E":"U","\u0170":"U","\u01D3":"U","\u0214":"U","\u0216":"U","\u01AF":"U","\u1EEA":"U","\u1EE8":"U","\u1EEE":"U","\u1EEC":"U","\u1EF0":"U","\u1EE4":"U","\u1E72":"U","\u0172":"U","\u1E76":"U","\u1E74":"U","\u0244":"U","\u24CB":"V","\uFF36":"V","\u1E7C":"V","\u1E7E":"V","\u01B2":"V","\uA75E":"V","\u0245":"V","\uA760":"VY","\u24CC":"W","\uFF37":"W","\u1E80":"W","\u1E82":"W","\u0174":"W","\u1E86":"W","\u1E84":"W","\u1E88":"W","\u2C72":"W","\u24CD":"X","\uFF38":"X","\u1E8A":"X","\u1E8C":"X","\u24CE":"Y","\uFF39":"Y","\u1EF2":"Y","\u00DD":"Y","\u0176":"Y","\u1EF8":"Y","\u0232":"Y","\u1E8E":"Y","\u0178":"Y","\u1EF6":"Y","\u1EF4":"Y","\u01B3":"Y","\u024E":"Y","\u1EFE":"Y","\u24CF":"Z","\uFF3A":"Z","\u0179":"Z","\u1E90":"Z","\u017B":"Z","\u017D":"Z","\u1E92":"Z","\u1E94":"Z","\u01B5":"Z","\u0224":"Z","\u2C7F":"Z","\u2C6B":"Z","\uA762":"Z","\u24D0":"a","\uFF41":"a","\u1E9A":"a","\u00E0":"a","\u00E1":"a","\u00E2":"a","\u1EA7":"a","\u1EA5":"a","\u1EAB":"a","\u1EA9":"a","\u00E3":"a","\u0101":"a","\u0103":"a","\u1EB1":"a","\u1EAF":"a","\u1EB5":"a","\u1EB3":"a","\u0227":"a","\u01E1":"a","\u00E4":"a","\u01DF":"a","\u1EA3":"a","\u00E5":"a","\u01FB":"a","\u01CE":"a","\u0201":"a","\u0203":"a","\u1EA1":"a","\u1EAD":"a","\u1EB7":"a","\u1E01":"a","\u0105":"a","\u2C65":"a","\u0250":"a","\uA733":"aa","\u00E6":"ae","\u01FD":"ae","\u01E3":"ae","\uA735":"ao","\uA737":"au","\uA739":"av","\uA73B":"av","\uA73D":"ay","\u24D1":"b","\uFF42":"b","\u1E03":"b","\u1E05":"b","\u1E07":"b","\u0180":"b","\u0183":"b","\u0253":"b","\u24D2":"c","\uFF43":"c","\u0107":"c","\u0109":"c","\u010B":"c","\u010D":"c","\u00E7":"c","\u1E09":"c","\u0188":"c","\u023C":"c","\uA73F":"c","\u2184":"c","\u24D3":"d","\uFF44":"d","\u1E0B":"d","\u010F":"d","\u1E0D":"d","\u1E11":"d","\u1E13":"d","\u1E0F":"d","\u0111":"d","\u018C":"d","\u0256":"d","\u0257":"d","\uA77A":"d","\u01F3":"dz","\u01C6":"dz","\u24D4":"e","\uFF45":"e","\u00E8":"e","\u00E9":"e","\u00EA":"e","\u1EC1":"e","\u1EBF":"e","\u1EC5":"e","\u1EC3":"e","\u1EBD":"e","\u0113":"e","\u1E15":"e","\u1E17":"e","\u0115":"e","\u0117":"e","\u00EB":"e","\u1EBB":"e","\u011B":"e","\u0205":"e","\u0207":"e","\u1EB9":"e","\u1EC7":"e","\u0229":"e","\u1E1D":"e","\u0119":"e","\u1E19":"e","\u1E1B":"e","\u0247":"e","\u025B":"e","\u01DD":"e","\u24D5":"f","\uFF46":"f","\u1E1F":"f","\u0192":"f","\uA77C":"f","\u24D6":"g","\uFF47":"g","\u01F5":"g","\u011D":"g","\u1E21":"g","\u011F":"g","\u0121":"g","\u01E7":"g","\u0123":"g","\u01E5":"g","\u0260":"g","\uA7A1":"g","\u1D79":"g","\uA77F":"g","\u24D7":"h","\uFF48":"h","\u0125":"h","\u1E23":"h","\u1E27":"h","\u021F":"h","\u1E25":"h","\u1E29":"h","\u1E2B":"h","\u1E96":"h","\u0127":"h","\u2C68":"h","\u2C76":"h","\u0265":"h","\u0195":"hv","\u24D8":"i","\uFF49":"i","\u00EC":"i","\u00ED":"i","\u00EE":"i","\u0129":"i","\u012B":"i","\u012D":"i","\u00EF":"i","\u1E2F":"i","\u1EC9":"i","\u01D0":"i","\u0209":"i","\u020B":"i","\u1ECB":"i","\u012F":"i","\u1E2D":"i","\u0268":"i","\u0131":"i","\u24D9":"j","\uFF4A":"j","\u0135":"j","\u01F0":"j","\u0249":"j","\u24DA":"k","\uFF4B":"k","\u1E31":"k","\u01E9":"k","\u1E33":"k","\u0137":"k","\u1E35":"k","\u0199":"k","\u2C6A":"k","\uA741":"k","\uA743":"k","\uA745":"k","\uA7A3":"k","\u24DB":"l","\uFF4C":"l","\u0140":"l","\u013A":"l","\u013E":"l","\u1E37":"l","\u1E39":"l","\u013C":"l","\u1E3D":"l","\u1E3B":"l","\u017F":"l","\u0142":"l","\u019A":"l","\u026B":"l","\u2C61":"l","\uA749":"l","\uA781":"l","\uA747":"l","\u01C9":"lj","\u24DC":"m","\uFF4D":"m","\u1E3F":"m","\u1E41":"m","\u1E43":"m","\u0271":"m","\u026F":"m","\u24DD":"n","\uFF4E":"n","\u01F9":"n","\u0144":"n","\u00F1":"n","\u1E45":"n","\u0148":"n","\u1E47":"n","\u0146":"n","\u1E4B":"n","\u1E49":"n","\u019E":"n","\u0272":"n","\u0149":"n","\uA791":"n","\uA7A5":"n","\u01CC":"nj","\u24DE":"o","\uFF4F":"o","\u00F2":"o","\u00F3":"o","\u00F4":"o","\u1ED3":"o","\u1ED1":"o","\u1ED7":"o","\u1ED5":"o","\u00F5":"o","\u1E4D":"o","\u022D":"o","\u1E4F":"o","\u014D":"o","\u1E51":"o","\u1E53":"o","\u014F":"o","\u022F":"o","\u0231":"o","\u00F6":"o","\u022B":"o","\u1ECF":"o","\u0151":"o","\u01D2":"o","\u020D":"o","\u020F":"o","\u01A1":"o","\u1EDD":"o","\u1EDB":"o","\u1EE1":"o","\u1EDF":"o","\u1EE3":"o","\u1ECD":"o","\u1ED9":"o","\u01EB":"o","\u01ED":"o","\u00F8":"o","\u01FF":"o","\u0254":"o","\uA74B":"o","\uA74D":"o","\u0275":"o","\u01A3":"oi","\u0223":"ou","\uA74F":"oo","\u24DF":"p","\uFF50":"p","\u1E55":"p","\u1E57":"p","\u01A5":"p","\u1D7D":"p","\uA751":"p","\uA753":"p","\uA755":"p","\u24E0":"q","\uFF51":"q","\u024B":"q","\uA757":"q","\uA759":"q","\u24E1":"r","\uFF52":"r","\u0155":"r","\u1E59":"r","\u0159":"r","\u0211":"r","\u0213":"r","\u1E5B":"r","\u1E5D":"r","\u0157":"r","\u1E5F":"r","\u024D":"r","\u027D":"r","\uA75B":"r","\uA7A7":"r","\uA783":"r","\u24E2":"s","\uFF53":"s","\u00DF":"s","\u015B":"s","\u1E65":"s","\u015D":"s","\u1E61":"s","\u0161":"s","\u1E67":"s","\u1E63":"s","\u1E69":"s","\u0219":"s","\u015F":"s","\u023F":"s","\uA7A9":"s","\uA785":"s","\u1E9B":"s","\u24E3":"t","\uFF54":"t","\u1E6B":"t","\u1E97":"t","\u0165":"t","\u1E6D":"t","\u021B":"t","\u0163":"t","\u1E71":"t","\u1E6F":"t","\u0167":"t","\u01AD":"t","\u0288":"t","\u2C66":"t","\uA787":"t","\uA729":"tz","\u24E4":"u","\uFF55":"u","\u00F9":"u","\u00FA":"u","\u00FB":"u","\u0169":"u","\u1E79":"u","\u016B":"u","\u1E7B":"u","\u016D":"u","\u00FC":"u","\u01DC":"u","\u01D8":"u","\u01D6":"u","\u01DA":"u","\u1EE7":"u","\u016F":"u","\u0171":"u","\u01D4":"u","\u0215":"u","\u0217":"u","\u01B0":"u","\u1EEB":"u","\u1EE9":"u","\u1EEF":"u","\u1EED":"u","\u1EF1":"u","\u1EE5":"u","\u1E73":"u","\u0173":"u","\u1E77":"u","\u1E75":"u","\u0289":"u","\u24E5":"v","\uFF56":"v","\u1E7D":"v","\u1E7F":"v","\u028B":"v","\uA75F":"v","\u028C":"v","\uA761":"vy","\u24E6":"w","\uFF57":"w","\u1E81":"w","\u1E83":"w","\u0175":"w","\u1E87":"w","\u1E85":"w","\u1E98":"w","\u1E89":"w","\u2C73":"w","\u24E7":"x","\uFF58":"x","\u1E8B":"x","\u1E8D":"x","\u24E8":"y","\uFF59":"y","\u1EF3":"y","\u00FD":"y","\u0177":"y","\u1EF9":"y","\u0233":"y","\u1E8F":"y","\u00FF":"y","\u1EF7":"y","\u1E99":"y","\u1EF5":"y","\u01B4":"y","\u024F":"y","\u1EFF":"y","\u24E9":"z","\uFF5A":"z","\u017A":"z","\u1E91":"z","\u017C":"z","\u017E":"z","\u1E93":"z","\u1E95":"z","\u01B6":"z","\u0225":"z","\u0240":"z","\u2C6C":"z","\uA763":"z"};
+
+    $document = $(document);
+
+    nextUid=(function() { var counter=1; return function() { return counter++; }; }());
+
+
+    function reinsertElement(element) {
+        var placeholder = $(document.createTextNode(''));
+
+        element.before(placeholder);
+        placeholder.before(element);
+        placeholder.remove();
+    }
+
+    function stripDiacritics(str) {
+        // Used 'uni range + named function' from http://jsperf.com/diacritics/18
+        function match(a) {
+            return DIACRITICS[a] || a;
+        }
+
+        return str.replace(/[^\u0000-\u007E]/g, match);
+    }
+
+    function indexOf(value, array) {
+        var i = 0, l = array.length;
+        for (; i < l; i = i + 1) {
+            if (equal(value, array[i])) return i;
+        }
+        return -1;
+    }
+
+    function measureScrollbar () {
+        var $template = $( MEASURE_SCROLLBAR_TEMPLATE );
+        $template.appendTo('body');
+
+        var dim = {
+            width: $template.width() - $template[0].clientWidth,
+            height: $template.height() - $template[0].clientHeight
+        };
+        $template.remove();
+
+        return dim;
+    }
+
+    /**
+     * Compares equality of a and b
+     * @param a
+     * @param b
+     */
+    function equal(a, b) {
+        if (a === b) return true;
+        if (a === undefined || b === undefined) return false;
+        if (a === null || b === null) return false;
+        // Check whether 'a' or 'b' is a string (primitive or object).
+        // The concatenation of an empty string (+'') converts its argument to a string's primitive.
+        if (a.constructor === String) return a+'' === b+''; // a+'' - in case 'a' is a String object
+        if (b.constructor === String) return b+'' === a+''; // b+'' - in case 'b' is a String object
+        return false;
+    }
+
+    /**
+     * Splits the string into an array of values, trimming each value. An empty array is returned for nulls or empty
+     * strings
+     * @param string
+     * @param separator
+     */
+    function splitVal(string, separator) {
+        var val, i, l;
+        if (string === null || string.length < 1) return [];
+        val = string.split(separator);
+        for (i = 0, l = val.length; i < l; i = i + 1) val[i] = $.trim(val[i]);
+        return val;
+    }
+
+    function getSideBorderPadding(element) {
+        return element.outerWidth(false) - element.width();
+    }
+
+    function installKeyUpChangeEvent(element) {
+        var key="keyup-change-value";
+        element.on("keydown", function () {
+            if ($.data(element, key) === undefined) {
+                $.data(element, key, element.val());
+            }
+        });
+        element.on("keyup", function () {
+            var val= $.data(element, key);
+            if (val !== undefined && element.val() !== val) {
+                $.removeData(element, key);
+                element.trigger("keyup-change");
+            }
+        });
+    }
+
+    $document.on("mousemove", function (e) {
+        lastMousePosition.x = e.pageX;
+        lastMousePosition.y = e.pageY;
+    });
+
+    /**
+     * filters mouse events so an event is fired only if the mouse moved.
+     *
+     * filters out mouse events that occur when mouse is stationary but
+     * the elements under the pointer are scrolled.
+     */
+    function installFilteredMouseMove(element) {
+        element.on("mousemove", function (e) {
+            var lastpos = lastMousePosition;
+            if (lastpos === undefined || lastpos.x !== e.pageX || lastpos.y !== e.pageY) {
+                $(e.target).trigger("mousemove-filtered", e);
+            }
+        });
+    }
+
+    /**
+     * Debounces a function. Returns a function that calls the original fn function only if no invocations have been made
+     * within the last quietMillis milliseconds.
+     *
+     * @param quietMillis number of milliseconds to wait before invoking fn
+     * @param fn function to be debounced
+     * @param ctx object to be used as this reference within fn
+     * @return debounced version of fn
+     */
+    function debounce(quietMillis, fn, ctx) {
+        ctx = ctx || undefined;
+        var timeout;
+        return function () {
+            var args = arguments;
+            window.clearTimeout(timeout);
+            timeout = window.setTimeout(function() {
+                fn.apply(ctx, args);
+            }, quietMillis);
+        };
+    }
+
+    function installDebouncedScroll(threshold, element) {
+        var notify = debounce(threshold, function (e) { element.trigger("scroll-debounced", e);});
+        element.on("scroll", function (e) {
+            if (indexOf(e.target, element.get()) >= 0) notify(e);
+        });
+    }
+
+    function focus($el) {
+        if ($el[0] === document.activeElement) return;
+
+        /* set the focus in a 0 timeout - that way the focus is set after the processing
+            of the current event has finished - which seems like the only reliable way
+            to set focus */
+        window.setTimeout(function() {
+            var el=$el[0], pos=$el.val().length, range;
+
+            $el.focus();
+
+            /* make sure el received focus so we do not error out when trying to manipulate the caret.
+                sometimes modals or others listeners may steal it after its set */
+            var isVisible = (el.offsetWidth > 0 || el.offsetHeight > 0);
+            if (isVisible && el === document.activeElement) {
+
+                /* after the focus is set move the caret to the end, necessary when we val()
+                    just before setting focus */
+                if(el.setSelectionRange)
+                {
+                    el.setSelectionRange(pos, pos);
+                }
+                else if (el.createTextRange) {
+                    range = el.createTextRange();
+                    range.collapse(false);
+                    range.select();
+                }
+            }
+        }, 0);
+    }
+
+    function getCursorInfo(el) {
+        el = $(el)[0];
+        var offset = 0;
+        var length = 0;
+        if ('selectionStart' in el) {
+            offset = el.selectionStart;
+            length = el.selectionEnd - offset;
+        } else if ('selection' in document) {
+            el.focus();
+            var sel = document.selection.createRange();
+            length = document.selection.createRange().text.length;
+            sel.moveStart('character', -el.value.length);
+            offset = sel.text.length - length;
+        }
+        return { offset: offset, length: length };
+    }
+
+    function killEvent(event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    function killEventImmediately(event) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    }
+
+    function measureTextWidth(e) {
+        if (!sizer){
+            var style = e[0].currentStyle || window.getComputedStyle(e[0], null);
+            sizer = $(document.createElement("div")).css({
+                position: "absolute",
+                left: "-10000px",
+                top: "-10000px",
+                display: "none",
+                fontSize: style.fontSize,
+                fontFamily: style.fontFamily,
+                fontStyle: style.fontStyle,
+                fontWeight: style.fontWeight,
+                letterSpacing: style.letterSpacing,
+                textTransform: style.textTransform,
+                whiteSpace: "nowrap"
+            });
+            sizer.attr("class","select2-sizer");
+            $("body").append(sizer);
+        }
+        sizer.text(e.val());
+        return sizer.width();
+    }
+
+    function syncCssClasses(dest, src, adapter) {
+        var classes, replacements = [], adapted;
+
+        classes = dest.attr("class");
+        if (classes) {
+            classes = '' + classes; // for IE which returns object
+            $(classes.split(" ")).each2(function() {
+                if (this.indexOf("select2-") === 0) {
+                    replacements.push(this);
+                }
+            });
+        }
+        classes = src.attr("class");
+        if (classes) {
+            classes = '' + classes; // for IE which returns object
+            $(classes.split(" ")).each2(function() {
+                if (this.indexOf("select2-") !== 0) {
+                    adapted = adapter(this);
+                    if (adapted) {
+                        replacements.push(adapted);
+                    }
+                }
+            });
+        }
+        dest.attr("class", replacements.join(" "));
+    }
+
+
+    function markMatch(text, term, markup, escapeMarkup) {
+        var match=stripDiacritics(text.toUpperCase()).indexOf(stripDiacritics(term.toUpperCase())),
+            tl=term.length;
+
+        if (match<0) {
+            markup.push(escapeMarkup(text));
+            return;
+        }
+
+        markup.push(escapeMarkup(text.substring(0, match)));
+        markup.push("<span class='select2-match'>");
+        markup.push(escapeMarkup(text.substring(match, match + tl)));
+        markup.push("</span>");
+        markup.push(escapeMarkup(text.substring(match + tl, text.length)));
+    }
+
+    function defaultEscapeMarkup(markup) {
+        var replace_map = {
+            '\\': '&#92;',
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+            "/": '&#47;'
+        };
+
+        return String(markup).replace(/[&<>"'\/\\]/g, function (match) {
+            return replace_map[match];
+        });
+    }
+
+    /**
+     * Produces an ajax-based query function
+     *
+     * @param options object containing configuration parameters
+     * @param options.params parameter map for the transport ajax call, can contain such options as cache, jsonpCallback, etc. see $.ajax
+     * @param options.transport function that will be used to execute the ajax request. must be compatible with parameters supported by $.ajax
+     * @param options.url url for the data
+     * @param options.data a function(searchTerm, pageNumber, context) that should return an object containing query string parameters for the above url.
+     * @param options.dataType request data type: ajax, jsonp, other datatypes supported by jQuery's $.ajax function or the transport function if specified
+     * @param options.quietMillis (optional) milliseconds to wait before making the ajaxRequest, helps debounce the ajax function if invoked too often
+     * @param options.results a function(remoteData, pageNumber) that converts data returned form the remote request to the format expected by Select2.
+     *      The expected format is an object containing the following keys:
+     *      results array of objects that will be used as choices
+     *      more (optional) boolean indicating whether there are more results available
+     *      Example: {results:[{id:1, text:'Red'},{id:2, text:'Blue'}], more:true}
+     */
+    function ajax(options) {
+        var timeout, // current scheduled but not yet executed request
+            handler = null,
+            quietMillis = options.quietMillis || 100,
+            ajaxUrl = options.url,
+            self = this;
+
+        return function (query) {
+            window.clearTimeout(timeout);
+            timeout = window.setTimeout(function () {
+                var data = options.data, // ajax data function
+                    url = ajaxUrl, // ajax url string or function
+                    transport = options.transport || $.fn.select2.ajaxDefaults.transport,
+                    // deprecated - to be removed in 4.0  - use params instead
+                    deprecated = {
+                        type: options.type || 'GET', // set type of request (GET or POST)
+                        cache: options.cache || false,
+                        jsonpCallback: options.jsonpCallback||undefined,
+                        dataType: options.dataType||"json"
+                    },
+                    params = $.extend({}, $.fn.select2.ajaxDefaults.params, deprecated);
+
+                data = data ? data.call(self, query.term, query.page, query.context) : null;
+                url = (typeof url === 'function') ? url.call(self, query.term, query.page, query.context) : url;
+
+                if (handler && typeof handler.abort === "function") { handler.abort(); }
+
+                if (options.params) {
+                    if ($.isFunction(options.params)) {
+                        $.extend(params, options.params.call(self));
+                    } else {
+                        $.extend(params, options.params);
+                    }
+                }
+
+                $.extend(params, {
+                    url: url,
+                    dataType: options.dataType,
+                    data: data,
+                    success: function (data) {
+                        // TODO - replace query.page with query so users have access to term, page, etc.
+                        var results = options.results(data, query.page);
+                        query.callback(results);
+                    }
+                });
+                handler = transport.call(self, params);
+            }, quietMillis);
+        };
+    }
+
+    /**
+     * Produces a query function that works with a local array
+     *
+     * @param options object containing configuration parameters. The options parameter can either be an array or an
+     * object.
+     *
+     * If the array form is used it is assumed that it contains objects with 'id' and 'text' keys.
+     *
+     * If the object form is used it is assumed that it contains 'data' and 'text' keys. The 'data' key should contain
+     * an array of objects that will be used as choices. These objects must contain at least an 'id' key. The 'text'
+     * key can either be a String in which case it is expected that each element in the 'data' array has a key with the
+     * value of 'text' which will be used to match choices. Alternatively, text can be a function(item) that can extract
+     * the text.
+     */
+    function local(options) {
+        var data = options, // data elements
+            dataText,
+            tmp,
+            text = function (item) { return ""+item.text; }; // function used to retrieve the text portion of a data item that is matched against the search
+
+         if ($.isArray(data)) {
+            tmp = data;
+            data = { results: tmp };
+        }
+
+         if ($.isFunction(data) === false) {
+            tmp = data;
+            data = function() { return tmp; };
+        }
+
+        var dataItem = data();
+        if (dataItem.text) {
+            text = dataItem.text;
+            // if text is not a function we assume it to be a key name
+            if (!$.isFunction(text)) {
+                dataText = dataItem.text; // we need to store this in a separate variable because in the next step data gets reset and data.text is no longer available
+                text = function (item) { return item[dataText]; };
+            }
+        }
+
+        return function (query) {
+            var t = query.term, filtered = { results: [] }, process;
+            if (t === "") {
+                query.callback(data());
+                return;
+            }
+
+            process = function(datum, collection) {
+                var group, attr;
+                datum = datum[0];
+                if (datum.children) {
+                    group = {};
+                    for (attr in datum) {
+                        if (datum.hasOwnProperty(attr)) group[attr]=datum[attr];
+                    }
+                    group.children=[];
+                    $(datum.children).each2(function(i, childDatum) { process(childDatum, group.children); });
+                    if (group.children.length || query.matcher(t, text(group), datum)) {
+                        collection.push(group);
+                    }
+                } else {
+                    if (query.matcher(t, text(datum), datum)) {
+                        collection.push(datum);
+                    }
+                }
+            };
+
+            $(data().results).each2(function(i, datum) { process(datum, filtered.results); });
+            query.callback(filtered);
+        };
+    }
+
+    // TODO javadoc
+    function tags(data) {
+        var isFunc = $.isFunction(data);
+        return function (query) {
+            var t = query.term, filtered = {results: []};
+            var result = isFunc ? data(query) : data;
+            if ($.isArray(result)) {
+                $(result).each(function () {
+                    var isObject = this.text !== undefined,
+                        text = isObject ? this.text : this;
+                    if (t === "" || query.matcher(t, text)) {
+                        filtered.results.push(isObject ? this : {id: this, text: this});
+                    }
+                });
+                query.callback(filtered);
+            }
+        };
+    }
+
+    /**
+     * Checks if the formatter function should be used.
+     *
+     * Throws an error if it is not a function. Returns true if it should be used,
+     * false if no formatting should be performed.
+     *
+     * @param formatter
+     */
+    function checkFormatter(formatter, formatterName) {
+        if ($.isFunction(formatter)) return true;
+        if (!formatter) return false;
+        if (typeof(formatter) === 'string') return true;
+        throw new Error(formatterName +" must be a string, function, or falsy value");
+    }
+
+    function evaluate(val) {
+        if ($.isFunction(val)) {
+            var args = Array.prototype.slice.call(arguments, 1);
+            return val.apply(null, args);
+        }
+        return val;
+    }
+
+    function countResults(results) {
+        var count = 0;
+        $.each(results, function(i, item) {
+            if (item.children) {
+                count += countResults(item.children);
+            } else {
+                count++;
+            }
+        });
+        return count;
+    }
+
+    /**
+     * Default tokenizer. This function uses breaks the input on substring match of any string from the
+     * opts.tokenSeparators array and uses opts.createSearchChoice to create the choice object. Both of those
+     * two options have to be defined in order for the tokenizer to work.
+     *
+     * @param input text user has typed so far or pasted into the search field
+     * @param selection currently selected choices
+     * @param selectCallback function(choice) callback tho add the choice to selection
+     * @param opts select2's opts
+     * @return undefined/null to leave the current input unchanged, or a string to change the input to the returned value
+     */
+    function defaultTokenizer(input, selection, selectCallback, opts) {
+        var original = input, // store the original so we can compare and know if we need to tell the search to update its text
+            dupe = false, // check for whether a token we extracted represents a duplicate selected choice
+            token, // token
+            index, // position at which the separator was found
+            i, l, // looping variables
+            separator; // the matched separator
+
+        if (!opts.createSearchChoice || !opts.tokenSeparators || opts.tokenSeparators.length < 1) return undefined;
+
+        while (true) {
+            index = -1;
+
+            for (i = 0, l = opts.tokenSeparators.length; i < l; i++) {
+                separator = opts.tokenSeparators[i];
+                index = input.indexOf(separator);
+                if (index >= 0) break;
+            }
+
+            if (index < 0) break; // did not find any token separator in the input string, bail
+
+            token = input.substring(0, index);
+            input = input.substring(index + separator.length);
+
+            if (token.length > 0) {
+                token = opts.createSearchChoice.call(this, token, selection);
+                if (token !== undefined && token !== null && opts.id(token) !== undefined && opts.id(token) !== null) {
+                    dupe = false;
+                    for (i = 0, l = selection.length; i < l; i++) {
+                        if (equal(opts.id(token), opts.id(selection[i]))) {
+                            dupe = true; break;
+                        }
+                    }
+
+                    if (!dupe) selectCallback(token);
+                }
+            }
+        }
+
+        if (original!==input) return input;
+    }
+
+    function cleanupJQueryElements() {
+        var self = this;
+
+        Array.prototype.forEach.call(arguments, function (element) {
+            self[element].remove();
+            self[element] = null;
+        });
+    }
+
+    /**
+     * Creates a new class
+     *
+     * @param superClass
+     * @param methods
+     */
+    function clazz(SuperClass, methods) {
+        var constructor = function () {};
+        constructor.prototype = new SuperClass;
+        constructor.prototype.constructor = constructor;
+        constructor.prototype.parent = SuperClass.prototype;
+        constructor.prototype = $.extend(constructor.prototype, methods);
+        return constructor;
+    }
+
+    AbstractSelect2 = clazz(Object, {
+
+        // abstract
+        bind: function (func) {
+            var self = this;
+            return function () {
+                func.apply(self, arguments);
+            };
+        },
+
+        // abstract
+        init: function (opts) {
+            var results, search, resultsSelector = ".select2-results";
+
+            // prepare options
+            this.opts = opts = this.prepareOpts(opts);
+
+            this.id=opts.id;
+
+            // destroy if called on an existing component
+            if (opts.element.data("select2") !== undefined &&
+                opts.element.data("select2") !== null) {
+                opts.element.data("select2").destroy();
+            }
+
+            this.container = this.createContainer();
+
+            this.liveRegion = $("<span>", {
+                    role: "status",
+                    "aria-live": "polite"
+                })
+                .addClass("select2-hidden-accessible")
+                .appendTo(document.body);
+
+            this.containerId="s2id_"+(opts.element.attr("id") || "autogen"+nextUid());
+            this.containerEventName= this.containerId
+                .replace(/([.])/g, '_')
+                .replace(/([;&,\-\.\+\*\~':"\!\^#$%@\[\]\(\)=>\|])/g, '\\$1');
+            this.container.attr("id", this.containerId);
+
+            this.container.attr("title", opts.element.attr("title"));
+
+            this.body = $("body");
+
+            syncCssClasses(this.container, this.opts.element, this.opts.adaptContainerCssClass);
+
+            this.container.attr("style", opts.element.attr("style"));
+            this.container.css(evaluate(opts.containerCss));
+            this.container.addClass(evaluate(opts.containerCssClass));
+
+            this.elementTabIndex = this.opts.element.attr("tabindex");
+
+            // swap container for the element
+            this.opts.element
+                .data("select2", this)
+                .attr("tabindex", "-1")
+                .before(this.container)
+                .on("click.select2", killEvent); // do not leak click events
+
+            this.container.data("select2", this);
+
+            this.dropdown = this.container.find(".select2-drop");
+
+            syncCssClasses(this.dropdown, this.opts.element, this.opts.adaptDropdownCssClass);
+
+            this.dropdown.addClass(evaluate(opts.dropdownCssClass));
+            this.dropdown.data("select2", this);
+            this.dropdown.on("click", killEvent);
+
+            this.results = results = this.container.find(resultsSelector);
+            this.search = search = this.container.find("input.select2-input");
+
+            this.queryCount = 0;
+            this.resultsPage = 0;
+            this.context = null;
+
+            // initialize the container
+            this.initContainer();
+
+            this.container.on("click", killEvent);
+
+            installFilteredMouseMove(this.results);
+
+            this.dropdown.on("mousemove-filtered", resultsSelector, this.bind(this.highlightUnderEvent));
+            this.dropdown.on("touchstart touchmove touchend", resultsSelector, this.bind(function (event) {
+                this._touchEvent = true;
+                this.highlightUnderEvent(event);
+            }));
+            this.dropdown.on("touchmove", resultsSelector, this.bind(this.touchMoved));
+            this.dropdown.on("touchstart touchend", resultsSelector, this.bind(this.clearTouchMoved));
+
+            // Waiting for a click event on touch devices to select option and hide dropdown
+            // otherwise click will be triggered on an underlying element
+            this.dropdown.on('click', this.bind(function (event) {
+                if (this._touchEvent) {
+                    this._touchEvent = false;
+                    this.selectHighlighted();
+                }
+            }));
+
+            installDebouncedScroll(80, this.results);
+            this.dropdown.on("scroll-debounced", resultsSelector, this.bind(this.loadMoreIfNeeded));
+
+            // do not propagate change event from the search field out of the component
+            $(this.container).on("change", ".select2-input", function(e) {e.stopPropagation();});
+            $(this.dropdown).on("change", ".select2-input", function(e) {e.stopPropagation();});
+
+            // if jquery.mousewheel plugin is installed we can prevent out-of-bounds scrolling of results via mousewheel
+            if ($.fn.mousewheel) {
+                results.mousewheel(function (e, delta, deltaX, deltaY) {
+                    var top = results.scrollTop();
+                    if (deltaY > 0 && top - deltaY <= 0) {
+                        results.scrollTop(0);
+                        killEvent(e);
+                    } else if (deltaY < 0 && results.get(0).scrollHeight - results.scrollTop() + deltaY <= results.height()) {
+                        results.scrollTop(results.get(0).scrollHeight - results.height());
+                        killEvent(e);
+                    }
+                });
+            }
+
+            installKeyUpChangeEvent(search);
+            search.on("keyup-change input paste", this.bind(this.updateResults));
+            search.on("focus", function () { search.addClass("select2-focused"); });
+            search.on("blur", function () { search.removeClass("select2-focused");});
+
+            this.dropdown.on("mouseup", resultsSelector, this.bind(function (e) {
+                if ($(e.target).closest(".select2-result-selectable").length > 0) {
+                    this.highlightUnderEvent(e);
+                    this.selectHighlighted(e);
+                }
+            }));
+
+            // trap all mouse events from leaving the dropdown. sometimes there may be a modal that is listening
+            // for mouse events outside of itself so it can close itself. since the dropdown is now outside the select2's
+            // dom it will trigger the popup close, which is not what we want
+            // focusin can cause focus wars between modals and select2 since the dropdown is outside the modal.
+            this.dropdown.on("click mouseup mousedown touchstart touchend focusin", function (e) { e.stopPropagation(); });
+
+            this.nextSearchTerm = undefined;
+
+            if ($.isFunction(this.opts.initSelection)) {
+                // initialize selection based on the current value of the source element
+                this.initSelection();
+
+                // if the user has provided a function that can set selection based on the value of the source element
+                // we monitor the change event on the element and trigger it, allowing for two way synchronization
+                this.monitorSource();
+            }
+
+            if (opts.maximumInputLength !== null) {
+                this.search.attr("maxlength", opts.maximumInputLength);
+            }
+
+            var disabled = opts.element.prop("disabled");
+            if (disabled === undefined) disabled = false;
+            this.enable(!disabled);
+
+            var readonly = opts.element.prop("readonly");
+            if (readonly === undefined) readonly = false;
+            this.readonly(readonly);
+
+            // Calculate size of scrollbar
+            scrollBarDimensions = scrollBarDimensions || measureScrollbar();
+
+            this.autofocus = opts.element.prop("autofocus");
+            opts.element.prop("autofocus", false);
+            if (this.autofocus) this.focus();
+
+            this.search.attr("placeholder", opts.searchInputPlaceholder);
+        },
+
+        // abstract
+        destroy: function () {
+            var element=this.opts.element, select2 = element.data("select2");
+
+            this.close();
+
+            if (this.propertyObserver) {
+                this.propertyObserver.disconnect();
+                this.propertyObserver = null;
+            }
+
+            if (select2 !== undefined) {
+                select2.container.remove();
+                select2.liveRegion.remove();
+                select2.dropdown.remove();
+                element
+                    .removeClass("select2-offscreen")
+                    .removeData("select2")
+                    .off(".select2")
+                    .prop("autofocus", this.autofocus || false);
+                if (this.elementTabIndex) {
+                    element.attr({tabindex: this.elementTabIndex});
+                } else {
+                    element.removeAttr("tabindex");
+                }
+                element.show();
+            }
+
+            cleanupJQueryElements.call(this,
+                "container",
+                "liveRegion",
+                "dropdown",
+                "results",
+                "search"
+            );
+        },
+
+        // abstract
+        optionToData: function(element) {
+            if (element.is("option")) {
+                return {
+                    id:element.prop("value"),
+                    text:element.text(),
+                    element: element.get(),
+                    css: element.attr("class"),
+                    disabled: element.prop("disabled"),
+                    locked: equal(element.attr("locked"), "locked") || equal(element.data("locked"), true)
+                };
+            } else if (element.is("optgroup")) {
+                return {
+                    text:element.attr("label"),
+                    children:[],
+                    element: element.get(),
+                    css: element.attr("class")
+                };
+            }
+        },
+
+        // abstract
+        prepareOpts: function (opts) {
+            var element, select, idKey, ajaxUrl, self = this;
+
+            element = opts.element;
+
+            if (element.get(0).tagName.toLowerCase() === "select") {
+                this.select = select = opts.element;
+            }
+
+            if (select) {
+                // these options are not allowed when attached to a select because they are picked up off the element itself
+                $.each(["id", "multiple", "ajax", "query", "createSearchChoice", "initSelection", "data", "tags"], function () {
+                    if (this in opts) {
+                        throw new Error("Option '" + this + "' is not allowed for Select2 when attached to a <select> element.");
+                    }
+                });
+            }
+
+            opts = $.extend({}, {
+                populateResults: function(container, results, query) {
+                    var populate, id=this.opts.id, liveRegion=this.liveRegion;
+
+                    populate=function(results, container, depth) {
+
+                        var i, l, result, selectable, disabled, compound, node, label, innerContainer, formatted;
+
+                        results = opts.sortResults(results, container, query);
+
+                        for (i = 0, l = results.length; i < l; i = i + 1) {
+
+                            result=results[i];
+
+                            disabled = (result.disabled === true);
+                            selectable = (!disabled) && (id(result) !== undefined);
+
+                            compound=result.children && result.children.length > 0;
+
+                            node=$("<li></li>");
+                            node.addClass("select2-results-dept-"+depth);
+                            node.addClass("select2-result");
+                            node.addClass(selectable ? "select2-result-selectable" : "select2-result-unselectable");
+                            if (disabled) { node.addClass("select2-disabled"); }
+                            if (compound) { node.addClass("select2-result-with-children"); }
+                            node.addClass(self.opts.formatResultCssClass(result));
+                            node.attr("role", "presentation");
+
+                            label=$(document.createElement("div"));
+                            label.addClass("select2-result-label");
+                            label.attr("id", "select2-result-label-" + nextUid());
+                            label.attr("role", "option");
+
+                            formatted=opts.formatResult(result, label, query, self.opts.escapeMarkup);
+                            if (formatted!==undefined) {
+                                label.html(formatted);
+                                node.append(label);
+                            }
+
+
+                            if (compound) {
+
+                                innerContainer=$("<ul></ul>");
+                                innerContainer.addClass("select2-result-sub");
+                                populate(result.children, innerContainer, depth+1);
+                                node.append(innerContainer);
+                            }
+
+                            node.data("select2-data", result);
+                            container.append(node);
+                        }
+
+                        liveRegion.text(opts.formatMatches(results.length));
+                    };
+
+                    populate(results, container, 0);
+                }
+            }, $.fn.select2.defaults, opts);
+
+            if (typeof(opts.id) !== "function") {
+                idKey = opts.id;
+                opts.id = function (e) { return e[idKey]; };
+            }
+
+            if ($.isArray(opts.element.data("select2Tags"))) {
+                if ("tags" in opts) {
+                    throw "tags specified as both an attribute 'data-select2-tags' and in options of Select2 " + opts.element.attr("id");
+                }
+                opts.tags=opts.element.data("select2Tags");
+            }
+
+            if (select) {
+                opts.query = this.bind(function (query) {
+                    var data = { results: [], more: false },
+                        term = query.term,
+                        children, placeholderOption, process;
+
+                    process=function(element, collection) {
+                        var group;
+                        if (element.is("option")) {
+                            if (query.matcher(term, element.text(), element)) {
+                                collection.push(self.optionToData(element));
+                            }
+                        } else if (element.is("optgroup")) {
+                            group=self.optionToData(element);
+                            element.children().each2(function(i, elm) { process(elm, group.children); });
+                            if (group.children.length>0) {
+                                collection.push(group);
+                            }
+                        }
+                    };
+
+                    children=element.children();
+
+                    // ignore the placeholder option if there is one
+                    if (this.getPlaceholder() !== undefined && children.length > 0) {
+                        placeholderOption = this.getPlaceholderOption();
+                        if (placeholderOption) {
+                            children=children.not(placeholderOption);
+                        }
+                    }
+
+                    children.each2(function(i, elm) { process(elm, data.results); });
+
+                    query.callback(data);
+                });
+                // this is needed because inside val() we construct choices from options and there id is hardcoded
+                opts.id=function(e) { return e.id; };
+            } else {
+                if (!("query" in opts)) {
+
+                    if ("ajax" in opts) {
+                        ajaxUrl = opts.element.data("ajax-url");
+                        if (ajaxUrl && ajaxUrl.length > 0) {
+                            opts.ajax.url = ajaxUrl;
+                        }
+                        opts.query = ajax.call(opts.element, opts.ajax);
+                    } else if ("data" in opts) {
+                        opts.query = local(opts.data);
+                    } else if ("tags" in opts) {
+                        opts.query = tags(opts.tags);
+                        if (opts.createSearchChoice === undefined) {
+                            opts.createSearchChoice = function (term) { return {id: $.trim(term), text: $.trim(term)}; };
+                        }
+                        if (opts.initSelection === undefined) {
+                            opts.initSelection = function (element, callback) {
+                                var data = [];
+                                $(splitVal(element.val(), opts.separator)).each(function () {
+                                    var obj = { id: this, text: this },
+                                        tags = opts.tags;
+                                    if ($.isFunction(tags)) tags=tags();
+                                    $(tags).each(function() { if (equal(this.id, obj.id)) { obj = this; return false; } });
+                                    data.push(obj);
+                                });
+
+                                callback(data);
+                            };
+                        }
+                    }
+                }
+            }
+            if (typeof(opts.query) !== "function") {
+                throw "query function not defined for Select2 " + opts.element.attr("id");
+            }
+
+            if (opts.createSearchChoicePosition === 'top') {
+                opts.createSearchChoicePosition = function(list, item) { list.unshift(item); };
+            }
+            else if (opts.createSearchChoicePosition === 'bottom') {
+                opts.createSearchChoicePosition = function(list, item) { list.push(item); };
+            }
+            else if (typeof(opts.createSearchChoicePosition) !== "function")  {
+                throw "invalid createSearchChoicePosition option must be 'top', 'bottom' or a custom function";
+            }
+
+            return opts;
+        },
+
+        /**
+         * Monitor the original element for changes and update select2 accordingly
+         */
+        // abstract
+        monitorSource: function () {
+            var el = this.opts.element, sync, observer;
+
+            el.on("change.select2", this.bind(function (e) {
+                if (this.opts.element.data("select2-change-triggered") !== true) {
+                    this.initSelection();
+                }
+            }));
+
+            sync = this.bind(function () {
+
+                // sync enabled state
+                var disabled = el.prop("disabled");
+                if (disabled === undefined) disabled = false;
+                this.enable(!disabled);
+
+                var readonly = el.prop("readonly");
+                if (readonly === undefined) readonly = false;
+                this.readonly(readonly);
+
+                syncCssClasses(this.container, this.opts.element, this.opts.adaptContainerCssClass);
+                this.container.addClass(evaluate(this.opts.containerCssClass));
+
+                syncCssClasses(this.dropdown, this.opts.element, this.opts.adaptDropdownCssClass);
+                this.dropdown.addClass(evaluate(this.opts.dropdownCssClass));
+
+            });
+
+            // IE8-10 (IE9/10 won't fire propertyChange via attachEventListener)
+            if (el.length && el[0].attachEvent) {
+                el.each(function() {
+                    this.attachEvent("onpropertychange", sync);
+                });
+            }
+            
+            // safari, chrome, firefox, IE11
+            observer = window.MutationObserver || window.WebKitMutationObserver|| window.MozMutationObserver;
+            if (observer !== undefined) {
+                if (this.propertyObserver) { delete this.propertyObserver; this.propertyObserver = null; }
+                this.propertyObserver = new observer(function (mutations) {
+                    mutations.forEach(sync);
+                });
+                this.propertyObserver.observe(el.get(0), { attributes:true, subtree:false });
+            }
+        },
+
+        // abstract
+        triggerSelect: function(data) {
+            var evt = $.Event("select2-selecting", { val: this.id(data), object: data });
+            this.opts.element.trigger(evt);
+            return !evt.isDefaultPrevented();
+        },
+
+        /**
+         * Triggers the change event on the source element
+         */
+        // abstract
+        triggerChange: function (details) {
+
+            details = details || {};
+            details= $.extend({}, details, { type: "change", val: this.val() });
+            // prevents recursive triggering
+            this.opts.element.data("select2-change-triggered", true);
+            this.opts.element.trigger(details);
+            this.opts.element.data("select2-change-triggered", false);
+
+            // some validation frameworks ignore the change event and listen instead to keyup, click for selects
+            // so here we trigger the click event manually
+            this.opts.element.click();
+
+            // ValidationEngine ignores the change event and listens instead to blur
+            // so here we trigger the blur event manually if so desired
+            if (this.opts.blurOnChange)
+                this.opts.element.blur();
+        },
+
+        //abstract
+        isInterfaceEnabled: function()
+        {
+            return this.enabledInterface === true;
+        },
+
+        // abstract
+        enableInterface: function() {
+            var enabled = this._enabled && !this._readonly,
+                disabled = !enabled;
+
+            if (enabled === this.enabledInterface) return false;
+
+            this.container.toggleClass("select2-container-disabled", disabled);
+            this.close();
+            this.enabledInterface = enabled;
+
+            return true;
+        },
+
+        // abstract
+        enable: function(enabled) {
+            if (enabled === undefined) enabled = true;
+            if (this._enabled === enabled) return;
+            this._enabled = enabled;
+
+            this.opts.element.prop("disabled", !enabled);
+            this.enableInterface();
+        },
+
+        // abstract
+        disable: function() {
+            this.enable(false);
+        },
+
+        // abstract
+        readonly: function(enabled) {
+            if (enabled === undefined) enabled = false;
+            if (this._readonly === enabled) return;
+            this._readonly = enabled;
+
+            this.opts.element.prop("readonly", enabled);
+            this.enableInterface();
+        },
+
+        // abstract
+        opened: function () {
+            return this.container.hasClass("select2-dropdown-open");
+        },
+
+        // abstract
+        positionDropdown: function() {
+            var $dropdown = this.dropdown,
+                offset = this.container.offset(),
+                height = this.container.outerHeight(false),
+                width = this.container.outerWidth(false),
+                dropHeight = $dropdown.outerHeight(false),
+                $window = $(window),
+                windowWidth = $window.width(),
+                windowHeight = $window.height(),
+                viewPortRight = $window.scrollLeft() + windowWidth,
+                viewportBottom = $window.scrollTop() + windowHeight,
+                dropTop = offset.top + height,
+                dropLeft = offset.left,
+                enoughRoomBelow = dropTop + dropHeight <= viewportBottom,
+                enoughRoomAbove = (offset.top - dropHeight) >= $window.scrollTop(),
+                dropWidth = $dropdown.outerWidth(false),
+                enoughRoomOnRight = dropLeft + dropWidth <= viewPortRight,
+                aboveNow = $dropdown.hasClass("select2-drop-above"),
+                bodyOffset,
+                above,
+                changeDirection,
+                css,
+                resultsListNode;
+
+            // always prefer the current above/below alignment, unless there is not enough room
+            if (aboveNow) {
+                above = true;
+                if (!enoughRoomAbove && enoughRoomBelow) {
+                    changeDirection = true;
+                    above = false;
+                }
+            } else {
+                above = false;
+                if (!enoughRoomBelow && enoughRoomAbove) {
+                    changeDirection = true;
+                    above = true;
+                }
+            }
+
+            //if we are changing direction we need to get positions when dropdown is hidden;
+            if (changeDirection) {
+                $dropdown.hide();
+                offset = this.container.offset();
+                height = this.container.outerHeight(false);
+                width = this.container.outerWidth(false);
+                dropHeight = $dropdown.outerHeight(false);
+                viewPortRight = $window.scrollLeft() + windowWidth;
+                viewportBottom = $window.scrollTop() + windowHeight;
+                dropTop = offset.top + height;
+                dropLeft = offset.left;
+                dropWidth = $dropdown.outerWidth(false);
+                enoughRoomOnRight = dropLeft + dropWidth <= viewPortRight;
+                $dropdown.show();
+
+                // fix so the cursor does not move to the left within the search-textbox in IE
+                this.focusSearch();
+            }
+
+            if (this.opts.dropdownAutoWidth) {
+                resultsListNode = $('.select2-results', $dropdown)[0];
+                $dropdown.addClass('select2-drop-auto-width');
+                $dropdown.css('width', '');
+                // Add scrollbar width to dropdown if vertical scrollbar is present
+                dropWidth = $dropdown.outerWidth(false) + (resultsListNode.scrollHeight === resultsListNode.clientHeight ? 0 : scrollBarDimensions.width);
+                dropWidth > width ? width = dropWidth : dropWidth = width;
+                dropHeight = $dropdown.outerHeight(false);
+                enoughRoomOnRight = dropLeft + dropWidth <= viewPortRight;
+            }
+            else {
+                this.container.removeClass('select2-drop-auto-width');
+            }
+
+            //console.log("below/ droptop:", dropTop, "dropHeight", dropHeight, "sum", (dropTop+dropHeight)+" viewport bottom", viewportBottom, "enough?", enoughRoomBelow);
+            //console.log("above/ offset.top", offset.top, "dropHeight", dropHeight, "top", (offset.top-dropHeight), "scrollTop", this.body.scrollTop(), "enough?", enoughRoomAbove);
+
+            // fix positioning when body has an offset and is not position: static
+            if (this.body.css('position') !== 'static') {
+                bodyOffset = this.body.offset();
+                dropTop -= bodyOffset.top;
+                dropLeft -= bodyOffset.left;
+            }
+
+            if (!enoughRoomOnRight) {
+                dropLeft = offset.left + this.container.outerWidth(false) - dropWidth;
+            }
+
+            css =  {
+                left: dropLeft,
+                width: width
+            };
+
+            if (above) {
+                css.top = offset.top - dropHeight;
+                css.bottom = 'auto';
+                this.container.addClass("select2-drop-above");
+                $dropdown.addClass("select2-drop-above");
+            }
+            else {
+                css.top = dropTop;
+                css.bottom = 'auto';
+                this.container.removeClass("select2-drop-above");
+                $dropdown.removeClass("select2-drop-above");
+            }
+            css = $.extend(css, evaluate(this.opts.dropdownCss));
+
+            $dropdown.css(css);
+        },
+
+        // abstract
+        shouldOpen: function() {
+            var event;
+
+            if (this.opened()) return false;
+
+            if (this._enabled === false || this._readonly === true) return false;
+
+            event = $.Event("select2-opening");
+            this.opts.element.trigger(event);
+            return !event.isDefaultPrevented();
+        },
+
+        // abstract
+        clearDropdownAlignmentPreference: function() {
+            // clear the classes used to figure out the preference of where the dropdown should be opened
+            this.container.removeClass("select2-drop-above");
+            this.dropdown.removeClass("select2-drop-above");
+        },
+
+        /**
+         * Opens the dropdown
+         *
+         * @return {Boolean} whether or not dropdown was opened. This method will return false if, for example,
+         * the dropdown is already open, or if the 'open' event listener on the element called preventDefault().
+         */
+        // abstract
+        open: function () {
+
+            if (!this.shouldOpen()) return false;
+
+            this.opening();
+
+            return true;
+        },
+
+        /**
+         * Performs the opening of the dropdown
+         */
+        // abstract
+        opening: function() {
+            var cid = this.containerEventName,
+                scroll = "scroll." + cid,
+                resize = "resize."+cid,
+                orient = "orientationchange."+cid,
+                mask;
+
+            this.container.addClass("select2-dropdown-open").addClass("select2-container-active");
+
+            this.clearDropdownAlignmentPreference();
+
+            if(this.dropdown[0] !== this.body.children().last()[0]) {
+                this.dropdown.detach().appendTo(this.body);
+            }
+
+            // create the dropdown mask if doesn't already exist
+            mask = $("#select2-drop-mask");
+            if (mask.length == 0) {
+                mask = $(document.createElement("div"));
+                mask.attr("id","select2-drop-mask").attr("class","select2-drop-mask");
+                mask.hide();
+                mask.appendTo(this.body);
+                mask.on("mousedown touchstart click", function (e) {
+                    // Prevent IE from generating a click event on the body
+                    reinsertElement(mask);
+
+                    var dropdown = $("#select2-drop"), self;
+                    if (dropdown.length > 0) {
+                        self=dropdown.data("select2");
+                        if (self.opts.selectOnBlur) {
+                            self.selectHighlighted({noFocus: true});
+                        }
+                        self.close();
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }
+                });
+            }
+
+            // ensure the mask is always right before the dropdown
+            if (this.dropdown.prev()[0] !== mask[0]) {
+                this.dropdown.before(mask);
+            }
+
+            // move the global id to the correct dropdown
+            $("#select2-drop").removeAttr("id");
+            this.dropdown.attr("id", "select2-drop");
+
+            // show the elements
+            mask.show();
+
+            this.positionDropdown();
+            this.dropdown.show();
+            this.positionDropdown();
+
+            this.dropdown.addClass("select2-drop-active");
+
+            // attach listeners to events that can change the position of the container and thus require
+            // the position of the dropdown to be updated as well so it does not come unglued from the container
+            var that = this;
+            this.container.parents().add(window).each(function () {
+                $(this).on(resize+" "+scroll+" "+orient, function (e) {
+                    if (that.opened()) that.positionDropdown();
+                });
+            });
+
+
+        },
+
+        // abstract
+        close: function () {
+            if (!this.opened()) return;
+
+            var cid = this.containerEventName,
+                scroll = "scroll." + cid,
+                resize = "resize."+cid,
+                orient = "orientationchange."+cid;
+
+            // unbind event listeners
+            this.container.parents().add(window).each(function () { $(this).off(scroll).off(resize).off(orient); });
+
+            this.clearDropdownAlignmentPreference();
+
+            $("#select2-drop-mask").hide();
+            this.dropdown.removeAttr("id"); // only the active dropdown has the select2-drop id
+            this.dropdown.hide();
+            this.container.removeClass("select2-dropdown-open").removeClass("select2-container-active");
+            this.results.empty();
+
+
+            this.clearSearch();
+            this.search.removeClass("select2-active");
+            this.opts.element.trigger($.Event("select2-close"));
+        },
+
+        /**
+         * Opens control, sets input value, and updates results.
+         */
+        // abstract
+        externalSearch: function (term) {
+            this.open();
+            this.search.val(term);
+            this.updateResults(false);
+        },
+
+        // abstract
+        clearSearch: function () {
+
+        },
+
+        //abstract
+        getMaximumSelectionSize: function() {
+            return evaluate(this.opts.maximumSelectionSize);
+        },
+
+        // abstract
+        ensureHighlightVisible: function () {
+            var results = this.results, children, index, child, hb, rb, y, more;
+
+            index = this.highlight();
+
+            if (index < 0) return;
+
+            if (index == 0) {
+
+                // if the first element is highlighted scroll all the way to the top,
+                // that way any unselectable headers above it will also be scrolled
+                // into view
+
+                results.scrollTop(0);
+                return;
+            }
+
+            children = this.findHighlightableChoices().find('.select2-result-label');
+
+            child = $(children[index]);
+
+            hb = child.offset().top + child.outerHeight(true);
+
+            // if this is the last child lets also make sure select2-more-results is visible
+            if (index === children.length - 1) {
+                more = results.find("li.select2-more-results");
+                if (more.length > 0) {
+                    hb = more.offset().top + more.outerHeight(true);
+                }
+            }
+
+            rb = results.offset().top + results.outerHeight(true);
+            if (hb > rb) {
+                results.scrollTop(results.scrollTop() + (hb - rb));
+            }
+            y = child.offset().top - results.offset().top;
+
+            // make sure the top of the element is visible
+            if (y < 0 && child.css('display') != 'none' ) {
+                results.scrollTop(results.scrollTop() + y); // y is negative
+            }
+        },
+
+        // abstract
+        findHighlightableChoices: function() {
+            return this.results.find(".select2-result-selectable:not(.select2-disabled):not(.select2-selected)");
+        },
+
+        // abstract
+        moveHighlight: function (delta) {
+            var choices = this.findHighlightableChoices(),
+                index = this.highlight();
+
+            while (index > -1 && index < choices.length) {
+                index += delta;
+                var choice = $(choices[index]);
+                if (choice.hasClass("select2-result-selectable") && !choice.hasClass("select2-disabled") && !choice.hasClass("select2-selected")) {
+                    this.highlight(index);
+                    break;
+                }
+            }
+        },
+
+        // abstract
+        highlight: function (index) {
+            var choices = this.findHighlightableChoices(),
+                choice,
+                data;
+
+            if (arguments.length === 0) {
+                return indexOf(choices.filter(".select2-highlighted")[0], choices.get());
+            }
+
+            if (index >= choices.length) index = choices.length - 1;
+            if (index < 0) index = 0;
+
+            this.removeHighlight();
+
+            choice = $(choices[index]);
+            choice.addClass("select2-highlighted");
+
+            // ensure assistive technology can determine the active choice
+            this.search.attr("aria-activedescendant", choice.find(".select2-result-label").attr("id"));
+
+            this.ensureHighlightVisible();
+
+            this.liveRegion.text(choice.text());
+
+            data = choice.data("select2-data");
+            if (data) {
+                this.opts.element.trigger({ type: "select2-highlight", val: this.id(data), choice: data });
+            }
+        },
+
+        removeHighlight: function() {
+            this.results.find(".select2-highlighted").removeClass("select2-highlighted");
+        },
+
+        touchMoved: function() {
+            this._touchMoved = true;
+        },
+
+        clearTouchMoved: function() {
+          this._touchMoved = false;
+        },
+
+        // abstract
+        countSelectableResults: function() {
+            return this.findHighlightableChoices().length;
+        },
+
+        // abstract
+        highlightUnderEvent: function (event) {
+            var el = $(event.target).closest(".select2-result-selectable");
+            if (el.length > 0 && !el.is(".select2-highlighted")) {
+                var choices = this.findHighlightableChoices();
+                this.highlight(choices.index(el));
+            } else if (el.length == 0) {
+                // if we are over an unselectable item remove all highlights
+                this.removeHighlight();
+            }
+        },
+
+        // abstract
+        loadMoreIfNeeded: function () {
+            var results = this.results,
+                more = results.find("li.select2-more-results"),
+                below, // pixels the element is below the scroll fold, below==0 is when the element is starting to be visible
+                page = this.resultsPage + 1,
+                self=this,
+                term=this.search.val(),
+                context=this.context;
+
+            if (more.length === 0) return;
+            below = more.offset().top - results.offset().top - results.height();
+
+            if (below <= this.opts.loadMorePadding) {
+                more.addClass("select2-active");
+                this.opts.query({
+                        element: this.opts.element,
+                        term: term,
+                        page: page,
+                        context: context,
+                        matcher: this.opts.matcher,
+                        callback: this.bind(function (data) {
+
+                    // ignore a response if the select2 has been closed before it was received
+                    if (!self.opened()) return;
+
+
+                    self.opts.populateResults.call(this, results, data.results, {term: term, page: page, context:context});
+                    self.postprocessResults(data, false, false);
+
+                    if (data.more===true) {
+                        more.detach().appendTo(results).text(evaluate(self.opts.formatLoadMore, page+1));
+                        window.setTimeout(function() { self.loadMoreIfNeeded(); }, 10);
+                    } else {
+                        more.remove();
+                    }
+                    self.positionDropdown();
+                    self.resultsPage = page;
+                    self.context = data.context;
+                    this.opts.element.trigger({ type: "select2-loaded", items: data });
+                })});
+            }
+        },
+
+        /**
+         * Default tokenizer function which does nothing
+         */
+        tokenize: function() {
+
+        },
+
+        /**
+         * @param initial whether or not this is the call to this method right after the dropdown has been opened
+         */
+        // abstract
+        updateResults: function (initial) {
+            var search = this.search,
+                results = this.results,
+                opts = this.opts,
+                data,
+                self = this,
+                input,
+                term = search.val(),
+                lastTerm = $.data(this.container, "select2-last-term"),
+                // sequence number used to drop out-of-order responses
+                queryNumber;
+
+            // prevent duplicate queries against the same term
+            if (initial !== true && lastTerm && equal(term, lastTerm)) return;
+
+            $.data(this.container, "select2-last-term", term);
+
+            // if the search is currently hidden we do not alter the results
+            if (initial !== true && (this.showSearchInput === false || !this.opened())) {
+                return;
+            }
+
+            function postRender() {
+                search.removeClass("select2-active");
+                self.positionDropdown();
+                if (results.find('.select2-no-results,.select2-selection-limit,.select2-searching').length) {
+                    self.liveRegion.text(results.text());
+                }
+                else {
+                    self.liveRegion.text(self.opts.formatMatches(results.find('.select2-result-selectable').length));
+                }
+            }
+
+            function render(html) {
+                results.html(html);
+                postRender();
+            }
+
+            queryNumber = ++this.queryCount;
+
+            var maxSelSize = this.getMaximumSelectionSize();
+            if (maxSelSize >=1) {
+                data = this.data();
+                if ($.isArray(data) && data.length >= maxSelSize && checkFormatter(opts.formatSelectionTooBig, "formatSelectionTooBig")) {
+                    render("<li class='select2-selection-limit'>" + evaluate(opts.formatSelectionTooBig, maxSelSize) + "</li>");
+                    return;
+                }
+            }
+
+            if (search.val().length < opts.minimumInputLength) {
+                if (checkFormatter(opts.formatInputTooShort, "formatInputTooShort")) {
+                    render("<li class='select2-no-results'>" + evaluate(opts.formatInputTooShort, search.val(), opts.minimumInputLength) + "</li>");
+                } else {
+                    render("");
+                }
+                if (initial && this.showSearch) this.showSearch(true);
+                return;
+            }
+
+            if (opts.maximumInputLength && search.val().length > opts.maximumInputLength) {
+                if (checkFormatter(opts.formatInputTooLong, "formatInputTooLong")) {
+                    render("<li class='select2-no-results'>" + evaluate(opts.formatInputTooLong, search.val(), opts.maximumInputLength) + "</li>");
+                } else {
+                    render("");
+                }
+                return;
+            }
+
+            if (opts.formatSearching && this.findHighlightableChoices().length === 0) {
+                render("<li class='select2-searching'>" + evaluate(opts.formatSearching) + "</li>");
+            }
+
+            search.addClass("select2-active");
+
+            this.removeHighlight();
+
+            // give the tokenizer a chance to pre-process the input
+            input = this.tokenize();
+            if (input != undefined && input != null) {
+                search.val(input);
+            }
+
+            this.resultsPage = 1;
+
+            opts.query({
+                element: opts.element,
+                    term: search.val(),
+                    page: this.resultsPage,
+                    context: null,
+                    matcher: opts.matcher,
+                    callback: this.bind(function (data) {
+                var def; // default choice
+
+                // ignore old responses
+                if (queryNumber != this.queryCount) {
+                  return;
+                }
+
+                // ignore a response if the select2 has been closed before it was received
+                if (!this.opened()) {
+                    this.search.removeClass("select2-active");
+                    return;
+                }
+
+                // save context, if any
+                this.context = (data.context===undefined) ? null : data.context;
+                // create a default choice and prepend it to the list
+                if (this.opts.createSearchChoice && search.val() !== "") {
+                    def = this.opts.createSearchChoice.call(self, search.val(), data.results);
+                    if (def !== undefined && def !== null && self.id(def) !== undefined && self.id(def) !== null) {
+                        if ($(data.results).filter(
+                            function () {
+                                return equal(self.id(this), self.id(def));
+                            }).length === 0) {
+                            this.opts.createSearchChoicePosition(data.results, def);
+                        }
+                    }
+                }
+
+                if (data.results.length === 0 && checkFormatter(opts.formatNoMatches, "formatNoMatches")) {
+                    render("<li class='select2-no-results'>" + evaluate(opts.formatNoMatches, search.val()) + "</li>");
+                    return;
+                }
+
+                results.empty();
+                self.opts.populateResults.call(this, results, data.results, {term: search.val(), page: this.resultsPage, context:null});
+
+                if (data.more === true && checkFormatter(opts.formatLoadMore, "formatLoadMore")) {
+                    results.append("<li class='select2-more-results'>" + self.opts.escapeMarkup(evaluate(opts.formatLoadMore, this.resultsPage)) + "</li>");
+                    window.setTimeout(function() { self.loadMoreIfNeeded(); }, 10);
+                }
+
+                this.postprocessResults(data, initial);
+
+                postRender();
+
+                this.opts.element.trigger({ type: "select2-loaded", items: data });
+            })});
+        },
+
+        // abstract
+        cancel: function () {
+            this.close();
+        },
+
+        // abstract
+        blur: function () {
+            // if selectOnBlur == true, select the currently highlighted option
+            if (this.opts.selectOnBlur)
+                this.selectHighlighted({noFocus: true});
+
+            this.close();
+            this.container.removeClass("select2-container-active");
+            // synonymous to .is(':focus'), which is available in jquery >= 1.6
+            if (this.search[0] === document.activeElement) { this.search.blur(); }
+            this.clearSearch();
+            this.selection.find(".select2-search-choice-focus").removeClass("select2-search-choice-focus");
+        },
+
+        // abstract
+        focusSearch: function () {
+            focus(this.search);
+        },
+
+        // abstract
+        selectHighlighted: function (options) {
+            if (this._touchMoved) {
+              this.clearTouchMoved();
+              return;
+            }
+            var index=this.highlight(),
+                highlighted=this.results.find(".select2-highlighted"),
+                data = highlighted.closest('.select2-result').data("select2-data");
+
+            if (data) {
+                this.highlight(index);
+                this.onSelect(data, options);
+            } else if (options && options.noFocus) {
+                this.close();
+            }
+        },
+
+        // abstract
+        getPlaceholder: function () {
+            var placeholderOption;
+            return this.opts.element.attr("placeholder") ||
+                this.opts.element.attr("data-placeholder") || // jquery 1.4 compat
+                this.opts.element.data("placeholder") ||
+                this.opts.placeholder ||
+                ((placeholderOption = this.getPlaceholderOption()) !== undefined ? placeholderOption.text() : undefined);
+        },
+
+        // abstract
+        getPlaceholderOption: function() {
+            if (this.select) {
+                var firstOption = this.select.children('option').first();
+                if (this.opts.placeholderOption !== undefined ) {
+                    //Determine the placeholder option based on the specified placeholderOption setting
+                    return (this.opts.placeholderOption === "first" && firstOption) ||
+                           (typeof this.opts.placeholderOption === "function" && this.opts.placeholderOption(this.select));
+                } else if ($.trim(firstOption.text()) === "" && firstOption.val() === "") {
+                    //No explicit placeholder option specified, use the first if it's blank
+                    return firstOption;
+                }
+            }
+        },
+
+        /**
+         * Get the desired width for the container element.  This is
+         * derived first from option `width` passed to select2, then
+         * the inline 'style' on the original element, and finally
+         * falls back to the jQuery calculated element width.
+         */
+        // abstract
+        initContainerWidth: function () {
+            function resolveContainerWidth() {
+                var style, attrs, matches, i, l, attr;
+
+                if (this.opts.width === "off") {
+                    return null;
+                } else if (this.opts.width === "element"){
+                    return this.opts.element.outerWidth(false) === 0 ? 'auto' : this.opts.element.outerWidth(false) + 'px';
+                } else if (this.opts.width === "copy" || this.opts.width === "resolve") {
+                    // check if there is inline style on the element that contains width
+                    style = this.opts.element.attr('style');
+                    if (style !== undefined) {
+                        attrs = style.split(';');
+                        for (i = 0, l = attrs.length; i < l; i = i + 1) {
+                            attr = attrs[i].replace(/\s/g, '');
+                            matches = attr.match(/^width:(([-+]?([0-9]*\.)?[0-9]+)(px|em|ex|%|in|cm|mm|pt|pc))/i);
+                            if (matches !== null && matches.length >= 1)
+                                return matches[1];
+                        }
+                    }
+
+                    if (this.opts.width === "resolve") {
+                        // next check if css('width') can resolve a width that is percent based, this is sometimes possible
+                        // when attached to input type=hidden or elements hidden via css
+                        style = this.opts.element.css('width');
+                        if (style.indexOf("%") > 0) return style;
+
+                        // finally, fallback on the calculated width of the element
+                        return (this.opts.element.outerWidth(false) === 0 ? 'auto' : this.opts.element.outerWidth(false) + 'px');
+                    }
+
+                    return null;
+                } else if ($.isFunction(this.opts.width)) {
+                    return this.opts.width();
+                } else {
+                    return this.opts.width;
+               }
+            };
+
+            var width = resolveContainerWidth.call(this);
+            if (width !== null) {
+                this.container.css("width", width);
+            }
+        }
+    });
+
+    SingleSelect2 = clazz(AbstractSelect2, {
+
+        // single
+
+        createContainer: function () {
+            var container = $(document.createElement("div")).attr({
+                "class": "select2-container"
+            }).html([
+                "<a href='javascript:void(0)' class='select2-choice' tabindex='-1'>",
+                "   <span class='select2-chosen'>&#160;</span><abbr class='select2-search-choice-close'></abbr>",
+                "   <span class='select2-arrow' role='presentation'><b role='presentation'></b></span>",
+                "</a>",
+                "<label for='' class='select2-offscreen'></label>",
+                "<input class='select2-focusser select2-offscreen' type='text' aria-haspopup='true' role='button' />",
+                "<div class='select2-drop select2-display-none'>",
+                "   <div class='select2-search'>",
+                "       <label for='' class='select2-offscreen'></label>",
+                "       <input type='text' autocomplete='off' autocorrect='off' autocapitalize='off' spellcheck='false' class='select2-input' role='combobox' aria-expanded='true'",
+                "       aria-autocomplete='list' />",
+                "   </div>",
+                "   <ul class='select2-results' role='listbox'>",
+                "   </ul>",
+                "</div>"].join(""));
+            return container;
+        },
+
+        // single
+        enableInterface: function() {
+            if (this.parent.enableInterface.apply(this, arguments)) {
+                this.focusser.prop("disabled", !this.isInterfaceEnabled());
+            }
+        },
+
+        // single
+        opening: function () {
+            var el, range, len;
+
+            if (this.opts.minimumResultsForSearch >= 0) {
+                this.showSearch(true);
+            }
+
+            this.parent.opening.apply(this, arguments);
+
+            if (this.showSearchInput !== false) {
+                // IE appends focusser.val() at the end of field :/ so we manually insert it at the beginning using a range
+                // all other browsers handle this just fine
+
+                this.search.val(this.focusser.val());
+            }
+            if (this.opts.shouldFocusInput(this)) {
+                this.search.focus();
+                // move the cursor to the end after focussing, otherwise it will be at the beginning and
+                // new text will appear *before* focusser.val()
+                el = this.search.get(0);
+                if (el.createTextRange) {
+                    range = el.createTextRange();
+                    range.collapse(false);
+                    range.select();
+                } else if (el.setSelectionRange) {
+                    len = this.search.val().length;
+                    el.setSelectionRange(len, len);
+                }
+            }
+
+            // initializes search's value with nextSearchTerm (if defined by user)
+            // ignore nextSearchTerm if the dropdown is opened by the user pressing a letter
+            if(this.search.val() === "") {
+                if(this.nextSearchTerm != undefined){
+                    this.search.val(this.nextSearchTerm);
+                    this.search.select();
+                }
+            }
+
+            this.focusser.prop("disabled", true).val("");
+            this.updateResults(true);
+            this.opts.element.trigger($.Event("select2-open"));
+        },
+
+        // single
+        close: function () {
+            if (!this.opened()) return;
+            this.parent.close.apply(this, arguments);
+
+            this.focusser.prop("disabled", false);
+
+            if (this.opts.shouldFocusInput(this)) {
+                this.focusser.focus();
+            }
+        },
+
+        // single
+        focus: function () {
+            if (this.opened()) {
+                this.close();
+            } else {
+                this.focusser.prop("disabled", false);
+                if (this.opts.shouldFocusInput(this)) {
+                    this.focusser.focus();
+                }
+            }
+        },
+
+        // single
+        isFocused: function () {
+            return this.container.hasClass("select2-container-active");
+        },
+
+        // single
+        cancel: function () {
+            this.parent.cancel.apply(this, arguments);
+            this.focusser.prop("disabled", false);
+
+            if (this.opts.shouldFocusInput(this)) {
+                this.focusser.focus();
+            }
+        },
+
+        // single
+        destroy: function() {
+            $("label[for='" + this.focusser.attr('id') + "']")
+                .attr('for', this.opts.element.attr("id"));
+            this.parent.destroy.apply(this, arguments);
+
+            cleanupJQueryElements.call(this,
+                "selection",
+                "focusser"
+            );
+        },
+
+        // single
+        initContainer: function () {
+
+            var selection,
+                container = this.container,
+                dropdown = this.dropdown,
+                idSuffix = nextUid(),
+                elementLabel;
+
+            if (this.opts.minimumResultsForSearch < 0) {
+                this.showSearch(false);
+            } else {
+                this.showSearch(true);
+            }
+
+            this.selection = selection = container.find(".select2-choice");
+
+            this.focusser = container.find(".select2-focusser");
+
+            // add aria associations
+            selection.find(".select2-chosen").attr("id", "select2-chosen-"+idSuffix);
+            this.focusser.attr("aria-labelledby", "select2-chosen-"+idSuffix);
+            this.results.attr("id", "select2-results-"+idSuffix);
+            this.search.attr("aria-owns", "select2-results-"+idSuffix);
+
+            // rewrite labels from original element to focusser
+            this.focusser.attr("id", "s2id_autogen"+idSuffix);
+
+            elementLabel = $("label[for='" + this.opts.element.attr("id") + "']");
+
+            this.focusser.prev()
+                .text(elementLabel.text())
+                .attr('for', this.focusser.attr('id'));
+
+            // Ensure the original element retains an accessible name
+            var originalTitle = this.opts.element.attr("title");
+            this.opts.element.attr("title", (originalTitle || elementLabel.text()));
+
+            this.focusser.attr("tabindex", this.elementTabIndex);
+
+            // write label for search field using the label from the focusser element
+            this.search.attr("id", this.focusser.attr('id') + '_search');
+
+            this.search.prev()
+                .text($("label[for='" + this.focusser.attr('id') + "']").text())
+                .attr('for', this.search.attr('id'));
+
+            this.search.on("keydown", this.bind(function (e) {
+                if (!this.isInterfaceEnabled()) return;
+
+                if (e.which === KEY.PAGE_UP || e.which === KEY.PAGE_DOWN) {
+                    // prevent the page from scrolling
+                    killEvent(e);
+                    return;
+                }
+
+                switch (e.which) {
+                    case KEY.UP:
+                    case KEY.DOWN:
+                        this.moveHighlight((e.which === KEY.UP) ? -1 : 1);
+                        killEvent(e);
+                        return;
+                    case KEY.ENTER:
+                        this.selectHighlighted();
+                        killEvent(e);
+                        return;
+                    case KEY.TAB:
+                        this.selectHighlighted({noFocus: true});
+                        return;
+                    case KEY.ESC:
+                        this.cancel(e);
+                        killEvent(e);
+                        return;
+                }
+            }));
+
+            this.search.on("blur", this.bind(function(e) {
+                // a workaround for chrome to keep the search field focussed when the scroll bar is used to scroll the dropdown.
+                // without this the search field loses focus which is annoying
+                if (document.activeElement === this.body.get(0)) {
+                    window.setTimeout(this.bind(function() {
+                        if (this.opened()) {
+                            this.search.focus();
+                        }
+                    }), 0);
+                }
+            }));
+
+            this.focusser.on("keydown", this.bind(function (e) {
+                if (!this.isInterfaceEnabled()) return;
+
+                if (e.which === KEY.TAB || KEY.isControl(e) || KEY.isFunctionKey(e) || e.which === KEY.ESC) {
+                    return;
+                }
+
+                if (this.opts.openOnEnter === false && e.which === KEY.ENTER) {
+                    killEvent(e);
+                    return;
+                }
+
+                if (e.which == KEY.DOWN || e.which == KEY.UP
+                    || (e.which == KEY.ENTER && this.opts.openOnEnter)) {
+
+                    if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
+
+                    this.open();
+                    killEvent(e);
+                    return;
+                }
+
+                if (e.which == KEY.DELETE || e.which == KEY.BACKSPACE) {
+                    if (this.opts.allowClear) {
+                        this.clear();
+                    }
+                    killEvent(e);
+                    return;
+                }
+            }));
+
+
+            installKeyUpChangeEvent(this.focusser);
+            this.focusser.on("keyup-change input", this.bind(function(e) {
+                if (this.opts.minimumResultsForSearch >= 0) {
+                    e.stopPropagation();
+                    if (this.opened()) return;
+                    this.open();
+                }
+            }));
+
+            selection.on("mousedown touchstart", "abbr", this.bind(function (e) {
+                if (!this.isInterfaceEnabled()) return;
+                this.clear();
+                killEventImmediately(e);
+                this.close();
+                this.selection.focus();
+            }));
+
+            selection.on("mousedown touchstart", this.bind(function (e) {
+                // Prevent IE from generating a click event on the body
+                reinsertElement(selection);
+
+                if (!this.container.hasClass("select2-container-active")) {
+                    this.opts.element.trigger($.Event("select2-focus"));
+                }
+
+                if (this.opened()) {
+                    this.close();
+                } else if (this.isInterfaceEnabled()) {
+                    this.open();
+                }
+
+                killEvent(e);
+            }));
+
+            dropdown.on("mousedown touchstart", this.bind(function() {
+                if (this.opts.shouldFocusInput(this)) {
+                    this.search.focus();
+                }
+            }));
+
+            selection.on("focus", this.bind(function(e) {
+                killEvent(e);
+            }));
+
+            this.focusser.on("focus", this.bind(function(){
+                if (!this.container.hasClass("select2-container-active")) {
+                    this.opts.element.trigger($.Event("select2-focus"));
+                }
+                this.container.addClass("select2-container-active");
+            })).on("blur", this.bind(function() {
+                if (!this.opened()) {
+                    this.container.removeClass("select2-container-active");
+                    this.opts.element.trigger($.Event("select2-blur"));
+                }
+            }));
+            this.search.on("focus", this.bind(function(){
+                if (!this.container.hasClass("select2-container-active")) {
+                    this.opts.element.trigger($.Event("select2-focus"));
+                }
+                this.container.addClass("select2-container-active");
+            }));
+
+            this.initContainerWidth();
+            this.opts.element.addClass("select2-offscreen");
+            this.setPlaceholder();
+
+        },
+
+        // single
+        clear: function(triggerChange) {
+            var data=this.selection.data("select2-data");
+            if (data) { // guard against queued quick consecutive clicks
+                var evt = $.Event("select2-clearing");
+                this.opts.element.trigger(evt);
+                if (evt.isDefaultPrevented()) {
+                    return;
+                }
+                var placeholderOption = this.getPlaceholderOption();
+                this.opts.element.val(placeholderOption ? placeholderOption.val() : "");
+                this.selection.find(".select2-chosen").empty();
+                this.selection.removeData("select2-data");
+                this.setPlaceholder();
+
+                if (triggerChange !== false){
+                    this.opts.element.trigger({ type: "select2-removed", val: this.id(data), choice: data });
+                    this.triggerChange({removed:data});
+                }
+            }
+        },
+
+        /**
+         * Sets selection based on source element's value
+         */
+        // single
+        initSelection: function () {
+            var selected;
+            if (this.isPlaceholderOptionSelected()) {
+                this.updateSelection(null);
+                this.close();
+                this.setPlaceholder();
+            } else {
+                var self = this;
+                this.opts.initSelection.call(null, this.opts.element, function(selected){
+                    if (selected !== undefined && selected !== null) {
+                        self.updateSelection(selected);
+                        self.close();
+                        self.setPlaceholder();
+                        self.nextSearchTerm = self.opts.nextSearchTerm(selected, self.search.val());
+                    }
+                });
+            }
+        },
+
+        isPlaceholderOptionSelected: function() {
+            var placeholderOption;
+            if (this.getPlaceholder() === undefined) return false; // no placeholder specified so no option should be considered
+            return ((placeholderOption = this.getPlaceholderOption()) !== undefined && placeholderOption.prop("selected"))
+                || (this.opts.element.val() === "")
+                || (this.opts.element.val() === undefined)
+                || (this.opts.element.val() === null);
+        },
+
+        // single
+        prepareOpts: function () {
+            var opts = this.parent.prepareOpts.apply(this, arguments),
+                self=this;
+
+            if (opts.element.get(0).tagName.toLowerCase() === "select") {
+                // install the selection initializer
+                opts.initSelection = function (element, callback) {
+                    var selected = element.find("option").filter(function() { return this.selected && !this.disabled });
+                    // a single select box always has a value, no need to null check 'selected'
+                    callback(self.optionToData(selected));
+                };
+            } else if ("data" in opts) {
+                // install default initSelection when applied to hidden input and data is local
+                opts.initSelection = opts.initSelection || function (element, callback) {
+                    var id = element.val();
+                    //search in data by id, storing the actual matching item
+                    var match = null;
+                    opts.query({
+                        matcher: function(term, text, el){
+                            var is_match = equal(id, opts.id(el));
+                            if (is_match) {
+                                match = el;
+                            }
+                            return is_match;
+                        },
+                        callback: !$.isFunction(callback) ? $.noop : function() {
+                            callback(match);
+                        }
+                    });
+                };
+            }
+
+            return opts;
+        },
+
+        // single
+        getPlaceholder: function() {
+            // if a placeholder is specified on a single select without a valid placeholder option ignore it
+            if (this.select) {
+                if (this.getPlaceholderOption() === undefined) {
+                    return undefined;
+                }
+            }
+
+            return this.parent.getPlaceholder.apply(this, arguments);
+        },
+
+        // single
+        setPlaceholder: function () {
+            var placeholder = this.getPlaceholder();
+
+            if (this.isPlaceholderOptionSelected() && placeholder !== undefined) {
+
+                // check for a placeholder option if attached to a select
+                if (this.select && this.getPlaceholderOption() === undefined) return;
+
+                this.selection.find(".select2-chosen").html(this.opts.escapeMarkup(placeholder));
+
+                this.selection.addClass("select2-default");
+
+                this.container.removeClass("select2-allowclear");
+            }
+        },
+
+        // single
+        postprocessResults: function (data, initial, noHighlightUpdate) {
+            var selected = 0, self = this, showSearchInput = true;
+
+            // find the selected element in the result list
+
+            this.findHighlightableChoices().each2(function (i, elm) {
+                if (equal(self.id(elm.data("select2-data")), self.opts.element.val())) {
+                    selected = i;
+                    return false;
+                }
+            });
+
+            // and highlight it
+            if (noHighlightUpdate !== false) {
+                if (initial === true && selected >= 0) {
+                    this.highlight(selected);
+                } else {
+                    this.highlight(0);
+                }
+            }
+
+            // hide the search box if this is the first we got the results and there are enough of them for search
+
+            if (initial === true) {
+                var min = this.opts.minimumResultsForSearch;
+                if (min >= 0) {
+                    this.showSearch(countResults(data.results) >= min);
+                }
+            }
+        },
+
+        // single
+        showSearch: function(showSearchInput) {
+            if (this.showSearchInput === showSearchInput) return;
+
+            this.showSearchInput = showSearchInput;
+
+            this.dropdown.find(".select2-search").toggleClass("select2-search-hidden", !showSearchInput);
+            this.dropdown.find(".select2-search").toggleClass("select2-offscreen", !showSearchInput);
+            //add "select2-with-searchbox" to the container if search box is shown
+            $(this.dropdown, this.container).toggleClass("select2-with-searchbox", showSearchInput);
+        },
+
+        // single
+        onSelect: function (data, options) {
+
+            if (!this.triggerSelect(data)) { return; }
+
+            var old = this.opts.element.val(),
+                oldData = this.data();
+
+            this.opts.element.val(this.id(data));
+            this.updateSelection(data);
+
+            this.opts.element.trigger({ type: "select2-selected", val: this.id(data), choice: data });
+
+            this.nextSearchTerm = this.opts.nextSearchTerm(data, this.search.val());
+            this.close();
+
+            if ((!options || !options.noFocus) && this.opts.shouldFocusInput(this)) {
+                this.focusser.focus();
+            }
+
+            if (!equal(old, this.id(data))) {
+                this.triggerChange({ added: data, removed: oldData });
+            }
+        },
+
+        // single
+        updateSelection: function (data) {
+
+            var container=this.selection.find(".select2-chosen"), formatted, cssClass;
+
+            this.selection.data("select2-data", data);
+
+            container.empty();
+            if (data !== null) {
+                formatted=this.opts.formatSelection(data, container, this.opts.escapeMarkup);
+            }
+            if (formatted !== undefined) {
+                container.append(formatted);
+            }
+            cssClass=this.opts.formatSelectionCssClass(data, container);
+            if (cssClass !== undefined) {
+                container.addClass(cssClass);
+            }
+
+            this.selection.removeClass("select2-default");
+
+            if (this.opts.allowClear && this.getPlaceholder() !== undefined) {
+                this.container.addClass("select2-allowclear");
+            }
+        },
+
+        // single
+        val: function () {
+            var val,
+                triggerChange = false,
+                data = null,
+                self = this,
+                oldData = this.data();
+
+            if (arguments.length === 0) {
+                return this.opts.element.val();
+            }
+
+            val = arguments[0];
+
+            if (arguments.length > 1) {
+                triggerChange = arguments[1];
+            }
+
+            if (this.select) {
+                this.select
+                    .val(val)
+                    .find("option").filter(function() { return this.selected }).each2(function (i, elm) {
+                        data = self.optionToData(elm);
+                        return false;
+                    });
+                this.updateSelection(data);
+                this.setPlaceholder();
+                if (triggerChange) {
+                    this.triggerChange({added: data, removed:oldData});
+                }
+            } else {
+                // val is an id. !val is true for [undefined,null,'',0] - 0 is legal
+                if (!val && val !== 0) {
+                    this.clear(triggerChange);
+                    return;
+                }
+                if (this.opts.initSelection === undefined) {
+                    throw new Error("cannot call val() if initSelection() is not defined");
+                }
+                this.opts.element.val(val);
+                this.opts.initSelection(this.opts.element, function(data){
+                    self.opts.element.val(!data ? "" : self.id(data));
+                    self.updateSelection(data);
+                    self.setPlaceholder();
+                    if (triggerChange) {
+                        self.triggerChange({added: data, removed:oldData});
+                    }
+                });
+            }
+        },
+
+        // single
+        clearSearch: function () {
+            this.search.val("");
+            this.focusser.val("");
+        },
+
+        // single
+        data: function(value) {
+            var data,
+                triggerChange = false;
+
+            if (arguments.length === 0) {
+                data = this.selection.data("select2-data");
+                if (data == undefined) data = null;
+                return data;
+            } else {
+                if (arguments.length > 1) {
+                    triggerChange = arguments[1];
+                }
+                if (!value) {
+                    this.clear(triggerChange);
+                } else {
+                    data = this.data();
+                    this.opts.element.val(!value ? "" : this.id(value));
+                    this.updateSelection(value);
+                    if (triggerChange) {
+                        this.triggerChange({added: value, removed:data});
+                    }
+                }
+            }
+        }
+    });
+
+    MultiSelect2 = clazz(AbstractSelect2, {
+
+        // multi
+        createContainer: function () {
+            var container = $(document.createElement("div")).attr({
+                "class": "select2-container select2-container-multi"
+            }).html([
+                "<ul class='select2-choices'>",
+                "  <li class='select2-search-field'>",
+                "    <label for='' class='select2-offscreen'></label>",
+                "    <input type='text' autocomplete='off' autocorrect='off' autocapitalize='off' spellcheck='false' class='select2-input'>",
+                "  </li>",
+                "</ul>",
+                "<div class='select2-drop select2-drop-multi select2-display-none'>",
+                "   <ul class='select2-results'>",
+                "   </ul>",
+                "</div>"].join(""));
+            return container;
+        },
+
+        // multi
+        prepareOpts: function () {
+            var opts = this.parent.prepareOpts.apply(this, arguments),
+                self=this;
+
+            // TODO validate placeholder is a string if specified
+
+            if (opts.element.get(0).tagName.toLowerCase() === "select") {
+                // install the selection initializer
+                opts.initSelection = function (element, callback) {
+
+                    var data = [];
+
+                    element.find("option").filter(function() { return this.selected && !this.disabled }).each2(function (i, elm) {
+                        data.push(self.optionToData(elm));
+                    });
+                    callback(data);
+                };
+            } else if ("data" in opts) {
+                // install default initSelection when applied to hidden input and data is local
+                opts.initSelection = opts.initSelection || function (element, callback) {
+                    var ids = splitVal(element.val(), opts.separator);
+                    //search in data by array of ids, storing matching items in a list
+                    var matches = [];
+                    opts.query({
+                        matcher: function(term, text, el){
+                            var is_match = $.grep(ids, function(id) {
+                                return equal(id, opts.id(el));
+                            }).length;
+                            if (is_match) {
+                                matches.push(el);
+                            }
+                            return is_match;
+                        },
+                        callback: !$.isFunction(callback) ? $.noop : function() {
+                            // reorder matches based on the order they appear in the ids array because right now
+                            // they are in the order in which they appear in data array
+                            var ordered = [];
+                            for (var i = 0; i < ids.length; i++) {
+                                var id = ids[i];
+                                for (var j = 0; j < matches.length; j++) {
+                                    var match = matches[j];
+                                    if (equal(id, opts.id(match))) {
+                                        ordered.push(match);
+                                        matches.splice(j, 1);
+                                        break;
+                                    }
+                                }
+                            }
+                            callback(ordered);
+                        }
+                    });
+                };
+            }
+
+            return opts;
+        },
+
+        // multi
+        selectChoice: function (choice) {
+
+            var selected = this.container.find(".select2-search-choice-focus");
+            if (selected.length && choice && choice[0] == selected[0]) {
+
+            } else {
+                if (selected.length) {
+                    this.opts.element.trigger("choice-deselected", selected);
+                }
+                selected.removeClass("select2-search-choice-focus");
+                if (choice && choice.length) {
+                    this.close();
+                    choice.addClass("select2-search-choice-focus");
+                    this.opts.element.trigger("choice-selected", choice);
+                }
+            }
+        },
+
+        // multi
+        destroy: function() {
+            $("label[for='" + this.search.attr('id') + "']")
+                .attr('for', this.opts.element.attr("id"));
+            this.parent.destroy.apply(this, arguments);
+
+            cleanupJQueryElements.call(this,
+                "searchContainer",
+                "selection"
+            );
+        },
+
+        // multi
+        initContainer: function () {
+
+            var selector = ".select2-choices", selection;
+
+            this.searchContainer = this.container.find(".select2-search-field");
+            this.selection = selection = this.container.find(selector);
+
+            var _this = this;
+            this.selection.on("click", ".select2-search-choice:not(.select2-locked)", function (e) {
+                //killEvent(e);
+                _this.search[0].focus();
+                _this.selectChoice($(this));
+            });
+
+            // rewrite labels from original element to focusser
+            this.search.attr("id", "s2id_autogen"+nextUid());
+
+            this.search.prev()
+                .text($("label[for='" + this.opts.element.attr("id") + "']").text())
+                .attr('for', this.search.attr('id'));
+
+            this.search.on("input paste", this.bind(function() {
+                if (!this.isInterfaceEnabled()) return;
+                if (!this.opened()) {
+                    this.open();
+                }
+            }));
+
+            this.search.attr("tabindex", this.elementTabIndex);
+
+            this.keydowns = 0;
+            this.search.on("keydown", this.bind(function (e) {
+                if (!this.isInterfaceEnabled()) return;
+
+                ++this.keydowns;
+                var selected = selection.find(".select2-search-choice-focus");
+                var prev = selected.prev(".select2-search-choice:not(.select2-locked)");
+                var next = selected.next(".select2-search-choice:not(.select2-locked)");
+                var pos = getCursorInfo(this.search);
+
+                if (selected.length &&
+                    (e.which == KEY.LEFT || e.which == KEY.RIGHT || e.which == KEY.BACKSPACE || e.which == KEY.DELETE || e.which == KEY.ENTER)) {
+                    var selectedChoice = selected;
+                    if (e.which == KEY.LEFT && prev.length) {
+                        selectedChoice = prev;
+                    }
+                    else if (e.which == KEY.RIGHT) {
+                        selectedChoice = next.length ? next : null;
+                    }
+                    else if (e.which === KEY.BACKSPACE) {
+                        if (this.unselect(selected.first())) {
+                            this.search.width(10);
+                            selectedChoice = prev.length ? prev : next;
+                        }
+                    } else if (e.which == KEY.DELETE) {
+                        if (this.unselect(selected.first())) {
+                            this.search.width(10);
+                            selectedChoice = next.length ? next : null;
+                        }
+                    } else if (e.which == KEY.ENTER) {
+                        selectedChoice = null;
+                    }
+
+                    this.selectChoice(selectedChoice);
+                    killEvent(e);
+                    if (!selectedChoice || !selectedChoice.length) {
+                        this.open();
+                    }
+                    return;
+                } else if (((e.which === KEY.BACKSPACE && this.keydowns == 1)
+                    || e.which == KEY.LEFT) && (pos.offset == 0 && !pos.length)) {
+
+                    this.selectChoice(selection.find(".select2-search-choice:not(.select2-locked)").last());
+                    killEvent(e);
+                    return;
+                } else {
+                    this.selectChoice(null);
+                }
+
+                if (this.opened()) {
+                    switch (e.which) {
+                    case KEY.UP:
+                    case KEY.DOWN:
+                        this.moveHighlight((e.which === KEY.UP) ? -1 : 1);
+                        killEvent(e);
+                        return;
+                    case KEY.ENTER:
+                        this.selectHighlighted();
+                        killEvent(e);
+                        return;
+                    case KEY.TAB:
+                        this.selectHighlighted({noFocus:true});
+                        this.close();
+                        return;
+                    case KEY.ESC:
+                        this.cancel(e);
+                        killEvent(e);
+                        return;
+                    }
+                }
+
+                if (e.which === KEY.TAB || KEY.isControl(e) || KEY.isFunctionKey(e)
+                 || e.which === KEY.BACKSPACE || e.which === KEY.ESC) {
+                    return;
+                }
+
+                if (e.which === KEY.ENTER) {
+                    if (this.opts.openOnEnter === false) {
+                        return;
+                    } else if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) {
+                        return;
+                    }
+                }
+
+                this.open();
+
+                if (e.which === KEY.PAGE_UP || e.which === KEY.PAGE_DOWN) {
+                    // prevent the page from scrolling
+                    killEvent(e);
+                }
+
+                if (e.which === KEY.ENTER) {
+                    // prevent form from being submitted
+                    killEvent(e);
+                }
+
+            }));
+
+            this.search.on("keyup", this.bind(function (e) {
+                this.keydowns = 0;
+                this.resizeSearch();
+            })
+            );
+
+            this.search.on("blur", this.bind(function(e) {
+                this.container.removeClass("select2-container-active");
+                this.search.removeClass("select2-focused");
+                this.selectChoice(null);
+                if (!this.opened()) this.clearSearch();
+                e.stopImmediatePropagation();
+                this.opts.element.trigger($.Event("select2-blur"));
+            }));
+
+            this.container.on("click", selector, this.bind(function (e) {
+                if (!this.isInterfaceEnabled()) return;
+                if ($(e.target).closest(".select2-search-choice").length > 0) {
+                    // clicked inside a select2 search choice, do not open
+                    return;
+                }
+                this.selectChoice(null);
+                this.clearPlaceholder();
+                if (!this.container.hasClass("select2-container-active")) {
+                    this.opts.element.trigger($.Event("select2-focus"));
+                }
+                this.open();
+                this.focusSearch();
+                e.preventDefault();
+            }));
+
+            this.container.on("focus", selector, this.bind(function () {
+                if (!this.isInterfaceEnabled()) return;
+                if (!this.container.hasClass("select2-container-active")) {
+                    this.opts.element.trigger($.Event("select2-focus"));
+                }
+                this.container.addClass("select2-container-active");
+                this.dropdown.addClass("select2-drop-active");
+                this.clearPlaceholder();
+            }));
+
+            this.initContainerWidth();
+            this.opts.element.addClass("select2-offscreen");
+
+            // set the placeholder if necessary
+            this.clearSearch();
+        },
+
+        // multi
+        enableInterface: function() {
+            if (this.parent.enableInterface.apply(this, arguments)) {
+                this.search.prop("disabled", !this.isInterfaceEnabled());
+            }
+        },
+
+        // multi
+        initSelection: function () {
+            var data;
+            if (this.opts.element.val() === "" && this.opts.element.text() === "") {
+                this.updateSelection([]);
+                this.close();
+                // set the placeholder if necessary
+                this.clearSearch();
+            }
+            if (this.select || this.opts.element.val() !== "") {
+                var self = this;
+                this.opts.initSelection.call(null, this.opts.element, function(data){
+                    if (data !== undefined && data !== null) {
+                        self.updateSelection(data);
+                        self.close();
+                        // set the placeholder if necessary
+                        self.clearSearch();
+                    }
+                });
+            }
+        },
+
+        // multi
+        clearSearch: function () {
+            var placeholder = this.getPlaceholder(),
+                maxWidth = this.getMaxSearchWidth();
+
+            if (placeholder !== undefined  && this.getVal().length === 0 && this.search.hasClass("select2-focused") === false) {
+                this.search.val(placeholder).addClass("select2-default");
+                // stretch the search box to full width of the container so as much of the placeholder is visible as possible
+                // we could call this.resizeSearch(), but we do not because that requires a sizer and we do not want to create one so early because of a firefox bug, see #944
+                this.search.width(maxWidth > 0 ? maxWidth : this.container.css("width"));
+            } else {
+                this.search.val("").width(10);
+            }
+        },
+
+        // multi
+        clearPlaceholder: function () {
+            if (this.search.hasClass("select2-default")) {
+                this.search.val("").removeClass("select2-default");
+            }
+        },
+
+        // multi
+        opening: function () {
+            this.clearPlaceholder(); // should be done before super so placeholder is not used to search
+            this.resizeSearch();
+
+            this.parent.opening.apply(this, arguments);
+
+            this.focusSearch();
+
+            // initializes search's value with nextSearchTerm (if defined by user)
+            // ignore nextSearchTerm if the dropdown is opened by the user pressing a letter
+            if(this.search.val() === "") {
+                if(this.nextSearchTerm != undefined){
+                    this.search.val(this.nextSearchTerm);
+                    this.search.select();
+                }
+            }
+
+            this.updateResults(true);
+            if (this.opts.shouldFocusInput(this)) {
+                this.search.focus();
+            }
+            this.opts.element.trigger($.Event("select2-open"));
+        },
+
+        // multi
+        close: function () {
+            if (!this.opened()) return;
+            this.parent.close.apply(this, arguments);
+        },
+
+        // multi
+        focus: function () {
+            this.close();
+            this.search.focus();
+        },
+
+        // multi
+        isFocused: function () {
+            return this.search.hasClass("select2-focused");
+        },
+
+        // multi
+        updateSelection: function (data) {
+            var ids = [], filtered = [], self = this;
+
+            // filter out duplicates
+            $(data).each(function () {
+                if (indexOf(self.id(this), ids) < 0) {
+                    ids.push(self.id(this));
+                    filtered.push(this);
+                }
+            });
+            data = filtered;
+
+            this.selection.find(".select2-search-choice").remove();
+            $(data).each(function () {
+                self.addSelectedChoice(this);
+            });
+            self.postprocessResults();
+        },
+
+        // multi
+        tokenize: function() {
+            var input = this.search.val();
+            input = this.opts.tokenizer.call(this, input, this.data(), this.bind(this.onSelect), this.opts);
+            if (input != null && input != undefined) {
+                this.search.val(input);
+                if (input.length > 0) {
+                    this.open();
+                }
+            }
+
+        },
+
+        // multi
+        onSelect: function (data, options) {
+
+            if (!this.triggerSelect(data)) { return; }
+
+            this.addSelectedChoice(data);
+
+            this.opts.element.trigger({ type: "selected", val: this.id(data), choice: data });
+
+            // keep track of the search's value before it gets cleared
+            this.nextSearchTerm = this.opts.nextSearchTerm(data, this.search.val());
+
+            this.clearSearch();
+            this.updateResults();
+
+            if (this.select || !this.opts.closeOnSelect) this.postprocessResults(data, false, this.opts.closeOnSelect===true);
+
+            if (this.opts.closeOnSelect) {
+                this.close();
+                this.search.width(10);
+            } else {
+                if (this.countSelectableResults()>0) {
+                    this.search.width(10);
+                    this.resizeSearch();
+                    if (this.getMaximumSelectionSize() > 0 && this.val().length >= this.getMaximumSelectionSize()) {
+                        // if we reached max selection size repaint the results so choices
+                        // are replaced with the max selection reached message
+                        this.updateResults(true);
+                    } else {
+                        // initializes search's value with nextSearchTerm and update search result
+                        if(this.nextSearchTerm != undefined){
+                            this.search.val(this.nextSearchTerm);
+                            this.updateResults();
+                            this.search.select();
+                        }
+                    }
+                    this.positionDropdown();
+                } else {
+                    // if nothing left to select close
+                    this.close();
+                    this.search.width(10);
+                }
+            }
+
+            // since its not possible to select an element that has already been
+            // added we do not need to check if this is a new element before firing change
+            this.triggerChange({ added: data });
+
+            if (!options || !options.noFocus)
+                this.focusSearch();
+        },
+
+        // multi
+        cancel: function () {
+            this.close();
+            this.focusSearch();
+        },
+
+        addSelectedChoice: function (data) {
+            var enableChoice = !data.locked,
+                enabledItem = $(
+                    "<li class='select2-search-choice'>" +
+                    "    <div></div>" +
+                    "    <a href='#' class='select2-search-choice-close' tabindex='-1'></a>" +
+                    "</li>"),
+                disabledItem = $(
+                    "<li class='select2-search-choice select2-locked'>" +
+                    "<div></div>" +
+                    "</li>");
+            var choice = enableChoice ? enabledItem : disabledItem,
+                id = this.id(data),
+                val = this.getVal(),
+                formatted,
+                cssClass;
+
+            formatted=this.opts.formatSelection(data, choice.find("div"), this.opts.escapeMarkup);
+            if (formatted != undefined) {
+                choice.find("div").replaceWith("<div>"+formatted+"</div>");
+            }
+            cssClass=this.opts.formatSelectionCssClass(data, choice.find("div"));
+            if (cssClass != undefined) {
+                choice.addClass(cssClass);
+            }
+
+            if(enableChoice){
+              choice.find(".select2-search-choice-close")
+                  .on("mousedown", killEvent)
+                  .on("click dblclick", this.bind(function (e) {
+                  if (!this.isInterfaceEnabled()) return;
+
+                  this.unselect($(e.target));
+                  this.selection.find(".select2-search-choice-focus").removeClass("select2-search-choice-focus");
+                  killEvent(e);
+                  this.close();
+                  this.focusSearch();
+              })).on("focus", this.bind(function () {
+                  if (!this.isInterfaceEnabled()) return;
+                  this.container.addClass("select2-container-active");
+                  this.dropdown.addClass("select2-drop-active");
+              }));
+            }
+
+            choice.data("select2-data", data);
+            choice.insertBefore(this.searchContainer);
+
+            val.push(id);
+            this.setVal(val);
+        },
+
+        // multi
+        unselect: function (selected) {
+            var val = this.getVal(),
+                data,
+                index;
+            selected = selected.closest(".select2-search-choice");
+
+            if (selected.length === 0) {
+                throw "Invalid argument: " + selected + ". Must be .select2-search-choice";
+            }
+
+            data = selected.data("select2-data");
+
+            if (!data) {
+                // prevent a race condition when the 'x' is clicked really fast repeatedly the event can be queued
+                // and invoked on an element already removed
+                return;
+            }
+
+            var evt = $.Event("select2-removing");
+            evt.val = this.id(data);
+            evt.choice = data;
+            this.opts.element.trigger(evt);
+
+            if (evt.isDefaultPrevented()) {
+                return false;
+            }
+
+            while((index = indexOf(this.id(data), val)) >= 0) {
+                val.splice(index, 1);
+                this.setVal(val);
+                if (this.select) this.postprocessResults();
+            }
+
+            selected.remove();
+
+            this.opts.element.trigger({ type: "select2-removed", val: this.id(data), choice: data });
+            this.triggerChange({ removed: data });
+
+            return true;
+        },
+
+        // multi
+        postprocessResults: function (data, initial, noHighlightUpdate) {
+            var val = this.getVal(),
+                choices = this.results.find(".select2-result"),
+                compound = this.results.find(".select2-result-with-children"),
+                self = this;
+
+            choices.each2(function (i, choice) {
+                var id = self.id(choice.data("select2-data"));
+                if (indexOf(id, val) >= 0) {
+                    choice.addClass("select2-selected");
+                    // mark all children of the selected parent as selected
+                    choice.find(".select2-result-selectable").addClass("select2-selected");
+                }
+            });
+
+            compound.each2(function(i, choice) {
+                // hide an optgroup if it doesn't have any selectable children
+                if (!choice.is('.select2-result-selectable')
+                    && choice.find(".select2-result-selectable:not(.select2-selected)").length === 0) {
+                    choice.addClass("select2-selected");
+                }
+            });
+
+            if (this.highlight() == -1 && noHighlightUpdate !== false){
+                self.highlight(0);
+            }
+
+            //If all results are chosen render formatNoMatches
+            if(!this.opts.createSearchChoice && !choices.filter('.select2-result:not(.select2-selected)').length > 0){
+                if(!data || data && !data.more && this.results.find(".select2-no-results").length === 0) {
+                    if (checkFormatter(self.opts.formatNoMatches, "formatNoMatches")) {
+                        this.results.append("<li class='select2-no-results'>" + evaluate(self.opts.formatNoMatches, self.search.val()) + "</li>");
+                    }
+                }
+            }
+
+        },
+
+        // multi
+        getMaxSearchWidth: function() {
+            return this.selection.width() - getSideBorderPadding(this.search);
+        },
+
+        // multi
+        resizeSearch: function () {
+            var minimumWidth, left, maxWidth, containerLeft, searchWidth,
+                sideBorderPadding = getSideBorderPadding(this.search);
+
+            minimumWidth = measureTextWidth(this.search) + 10;
+
+            left = this.search.offset().left;
+
+            maxWidth = this.selection.width();
+            containerLeft = this.selection.offset().left;
+
+            searchWidth = maxWidth - (left - containerLeft) - sideBorderPadding;
+
+            if (searchWidth < minimumWidth) {
+                searchWidth = maxWidth - sideBorderPadding;
+            }
+
+            if (searchWidth < 40) {
+                searchWidth = maxWidth - sideBorderPadding;
+            }
+
+            if (searchWidth <= 0) {
+              searchWidth = minimumWidth;
+            }
+
+            this.search.width(Math.floor(searchWidth));
+        },
+
+        // multi
+        getVal: function () {
+            var val;
+            if (this.select) {
+                val = this.select.val();
+                return val === null ? [] : val;
+            } else {
+                val = this.opts.element.val();
+                return splitVal(val, this.opts.separator);
+            }
+        },
+
+        // multi
+        setVal: function (val) {
+            var unique;
+            if (this.select) {
+                this.select.val(val);
+            } else {
+                unique = [];
+                // filter out duplicates
+                $(val).each(function () {
+                    if (indexOf(this, unique) < 0) unique.push(this);
+                });
+                this.opts.element.val(unique.length === 0 ? "" : unique.join(this.opts.separator));
+            }
+        },
+
+        // multi
+        buildChangeDetails: function (old, current) {
+            var current = current.slice(0),
+                old = old.slice(0);
+
+            // remove intersection from each array
+            for (var i = 0; i < current.length; i++) {
+                for (var j = 0; j < old.length; j++) {
+                    if (equal(this.opts.id(current[i]), this.opts.id(old[j]))) {
+                        current.splice(i, 1);
+                        if(i>0){
+                        	i--;
+                        }
+                        old.splice(j, 1);
+                        j--;
+                    }
+                }
+            }
+
+            return {added: current, removed: old};
+        },
+
+
+        // multi
+        val: function (val, triggerChange) {
+            var oldData, self=this;
+
+            if (arguments.length === 0) {
+                return this.getVal();
+            }
+
+            oldData=this.data();
+            if (!oldData.length) oldData=[];
+
+            // val is an id. !val is true for [undefined,null,'',0] - 0 is legal
+            if (!val && val !== 0) {
+                this.opts.element.val("");
+                this.updateSelection([]);
+                this.clearSearch();
+                if (triggerChange) {
+                    this.triggerChange({added: this.data(), removed: oldData});
+                }
+                return;
+            }
+
+            // val is a list of ids
+            this.setVal(val);
+
+            if (this.select) {
+                this.opts.initSelection(this.select, this.bind(this.updateSelection));
+                if (triggerChange) {
+                    this.triggerChange(this.buildChangeDetails(oldData, this.data()));
+                }
+            } else {
+                if (this.opts.initSelection === undefined) {
+                    throw new Error("val() cannot be called if initSelection() is not defined");
+                }
+
+                this.opts.initSelection(this.opts.element, function(data){
+                    var ids=$.map(data, self.id);
+                    self.setVal(ids);
+                    self.updateSelection(data);
+                    self.clearSearch();
+                    if (triggerChange) {
+                        self.triggerChange(self.buildChangeDetails(oldData, self.data()));
+                    }
+                });
+            }
+            this.clearSearch();
+        },
+
+        // multi
+        onSortStart: function() {
+            if (this.select) {
+                throw new Error("Sorting of elements is not supported when attached to <select>. Attach to <input type='hidden'/> instead.");
+            }
+
+            // collapse search field into 0 width so its container can be collapsed as well
+            this.search.width(0);
+            // hide the container
+            this.searchContainer.hide();
+        },
+
+        // multi
+        onSortEnd:function() {
+
+            var val=[], self=this;
+
+            // show search and move it to the end of the list
+            this.searchContainer.show();
+            // make sure the search container is the last item in the list
+            this.searchContainer.appendTo(this.searchContainer.parent());
+            // since we collapsed the width in dragStarted, we resize it here
+            this.resizeSearch();
+
+            // update selection
+            this.selection.find(".select2-search-choice").each(function() {
+                val.push(self.opts.id($(this).data("select2-data")));
+            });
+            this.setVal(val);
+            this.triggerChange();
+        },
+
+        // multi
+        data: function(values, triggerChange) {
+            var self=this, ids, old;
+            if (arguments.length === 0) {
+                 return this.selection
+                     .children(".select2-search-choice")
+                     .map(function() { return $(this).data("select2-data"); })
+                     .get();
+            } else {
+                old = this.data();
+                if (!values) { values = []; }
+                ids = $.map(values, function(e) { return self.opts.id(e); });
+                this.setVal(ids);
+                this.updateSelection(values);
+                this.clearSearch();
+                if (triggerChange) {
+                    this.triggerChange(this.buildChangeDetails(old, this.data()));
+                }
+            }
+        }
+    });
+
+    $.fn.select2 = function () {
+
+        var args = Array.prototype.slice.call(arguments, 0),
+            opts,
+            select2,
+            method, value, multiple,
+            allowedMethods = ["val", "destroy", "opened", "open", "close", "focus", "isFocused", "container", "dropdown", "onSortStart", "onSortEnd", "enable", "disable", "readonly", "positionDropdown", "data", "search"],
+            valueMethods = ["opened", "isFocused", "container", "dropdown"],
+            propertyMethods = ["val", "data"],
+            methodsMap = { search: "externalSearch" };
+
+        this.each(function () {
+            if (args.length === 0 || typeof(args[0]) === "object") {
+                opts = args.length === 0 ? {} : $.extend({}, args[0]);
+                opts.element = $(this);
+
+                if (opts.element.get(0).tagName.toLowerCase() === "select") {
+                    multiple = opts.element.prop("multiple");
+                } else {
+                    multiple = opts.multiple || false;
+                    if ("tags" in opts) {opts.multiple = multiple = true;}
+                }
+
+                select2 = multiple ? new window.Select2["class"].multi() : new window.Select2["class"].single();
+                select2.init(opts);
+            } else if (typeof(args[0]) === "string") {
+
+                if (indexOf(args[0], allowedMethods) < 0) {
+                    throw "Unknown method: " + args[0];
+                }
+
+                value = undefined;
+                select2 = $(this).data("select2");
+                if (select2 === undefined) return;
+
+                method=args[0];
+
+                if (method === "container") {
+                    value = select2.container;
+                } else if (method === "dropdown") {
+                    value = select2.dropdown;
+                } else {
+                    if (methodsMap[method]) method = methodsMap[method];
+
+                    value = select2[method].apply(select2, args.slice(1));
+                }
+                if (indexOf(args[0], valueMethods) >= 0
+                    || (indexOf(args[0], propertyMethods) >= 0 && args.length == 1)) {
+                    return false; // abort the iteration, ready to return first matched value
+                }
+            } else {
+                throw "Invalid arguments to select2 plugin: " + args;
+            }
+        });
+        return (value === undefined) ? this : value;
+    };
+
+    // plugin defaults, accessible to users
+    $.fn.select2.defaults = {
+        width: "copy",
+        loadMorePadding: 0,
+        closeOnSelect: true,
+        openOnEnter: true,
+        containerCss: {},
+        dropdownCss: {},
+        containerCssClass: "",
+        dropdownCssClass: "",
+        formatResult: function(result, container, query, escapeMarkup) {
+            var markup=[];
+            markMatch(result.text, query.term, markup, escapeMarkup);
+            return markup.join("");
+        },
+        formatSelection: function (data, container, escapeMarkup) {
+            return data ? escapeMarkup(data.text) : undefined;
+        },
+        sortResults: function (results, container, query) {
+            return results;
+        },
+        formatResultCssClass: function(data) {return data.css;},
+        formatSelectionCssClass: function(data, container) {return undefined;},
+        formatMatches: function (matches) { return matches + " results are available, use up and down arrow keys to navigate."; },
+        formatNoMatches: function () { return "No matches found"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Please enter " + n + " or more character" + (n == 1? "" : "s"); },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Please delete " + n + " character" + (n == 1? "" : "s"); },
+        formatSelectionTooBig: function (limit) { return "You can only select " + limit + " item" + (limit == 1 ? "" : "s"); },
+        formatLoadMore: function (pageNumber) { return "Loading more results…"; },
+        formatSearching: function () { return "Searching…"; },
+        minimumResultsForSearch: 0,
+        minimumInputLength: 0,
+        maximumInputLength: null,
+        maximumSelectionSize: 0,
+        id: function (e) { return e == undefined ? null : e.id; },
+        matcher: function(term, text) {
+            return stripDiacritics(''+text).toUpperCase().indexOf(stripDiacritics(''+term).toUpperCase()) >= 0;
+        },
+        separator: ",",
+        tokenSeparators: [],
+        tokenizer: defaultTokenizer,
+        escapeMarkup: defaultEscapeMarkup,
+        blurOnChange: false,
+        selectOnBlur: false,
+        adaptContainerCssClass: function(c) { return c; },
+        adaptDropdownCssClass: function(c) { return null; },
+        nextSearchTerm: function(selectedObject, currentSearchTerm) { return undefined; },
+        searchInputPlaceholder: '',
+        createSearchChoicePosition: 'top',
+        shouldFocusInput: function (instance) {
+            // Attempt to detect touch devices
+            var supportsTouchEvents = (('ontouchstart' in window) ||
+                                       (navigator.msMaxTouchPoints > 0));
+
+            // Only devices which support touch events should be special cased
+            if (!supportsTouchEvents) {
+                return true;
+            }
+
+            // Never focus the input if search is disabled
+            if (instance.opts.minimumResultsForSearch < 0) {
+                return false;
+            }
+
+            return true;
+        }
+    };
+
+    $.fn.select2.ajaxDefaults = {
+        transport: $.ajax,
+        params: {
+            type: "GET",
+            cache: false,
+            dataType: "json"
+        }
+    };
+
+    // exports
+    window.Select2 = {
+        query: {
+            ajax: ajax,
+            local: local,
+            tags: tags
+        }, util: {
+            debounce: debounce,
+            markMatch: markMatch,
+            escapeMarkup: defaultEscapeMarkup,
+            stripDiacritics: stripDiacritics
+        }, "class": {
+            "abstract": AbstractSelect2,
+            "single": SingleSelect2,
+            "multi": MultiSelect2
+        }
+    };
+
+}(jQuery));
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_ar.js", function (exports, module) {
+﻿/**
+ * Select2 Arabic translation.
+ *
+ * Author: Adel KEDJOUR <adel@kedjour.com>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "لم يتم العثور على مطابقات"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; if (n == 1){ return "الرجاء إدخال حرف واحد على الأكثر"; } return n == 2 ? "الرجاء إدخال حرفين على الأكثر" : "الرجاء إدخال " + n + " على الأكثر"; },
+        formatInputTooLong: function (input, max) { var n = input.length - max; if (n == 1){ return "الرجاء إدخال حرف واحد على الأقل"; } return n == 2 ? "الرجاء إدخال حرفين على الأقل" : "الرجاء إدخال " + n + " على الأقل "; },
+        formatSelectionTooBig: function (limit) { if (n == 1){ return "يمكنك أن تختار إختيار واحد فقط"; } return n == 2 ? "يمكنك أن تختار إختيارين فقط" : "يمكنك أن تختار " + n + " إختيارات فقط"; },
+        formatLoadMore: function (pageNumber) { return "تحميل المزيد من النتائج…"; },
+        formatSearching: function () { return "البحث…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_bg.js", function (exports, module) {
+/**
+ * Select2 Bulgarian translation.
+ * 
+ * @author  Lubomir Vikev <lubomirvikev@gmail.com>
+ * @author  Uriy Efremochkin <efremochkin@uriy.me>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Няма намерени съвпадения"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Моля въведете още " + n + " символ" + (n > 1 ? "а" : ""); },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Моля въведете с " + n + " по-малко символ" + (n > 1 ? "а" : ""); },
+        formatSelectionTooBig: function (limit) { return "Можете да направите до " + limit + (limit > 1 ? " избора" : " избор"); },
+        formatLoadMore: function (pageNumber) { return "Зареждат се още…"; },
+        formatSearching: function () { return "Търсене…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_ca.js", function (exports, module) {
+/**
+ * Select2 Catalan translation.
+ * 
+ * Author: David Planella <david.planella@gmail.com>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "No s'ha trobat cap coincidència"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Introduïu " + n + " caràcter" + (n == 1 ? "" : "s") + " més"; },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Introduïu " + n + " caràcter" + (n == 1? "" : "s") + "menys"; },
+        formatSelectionTooBig: function (limit) { return "Només podeu seleccionar " + limit + " element" + (limit == 1 ? "" : "s"); },
+        formatLoadMore: function (pageNumber) { return "S'estan carregant més resultats…"; },
+        formatSearching: function () { return "S'està cercant…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_cs.js", function (exports, module) {
+/**
+ * Select2 Czech translation.
+ * 
+ * Author: Michal Marek <ahoj@michal-marek.cz>
+ * Author - sklonovani: David Vallner <david@vallner.net>
+ */
+(function ($) {
+    "use strict";
+    // use text for the numbers 2 through 4
+    var smallNumbers = {
+        2: function(masc) { return (masc ? "dva" : "dvě"); },
+        3: function() { return "tři"; },
+        4: function() { return "čtyři"; }
+    }
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Nenalezeny žádné položky"; },
+        formatInputTooShort: function (input, min) {
+            var n = min - input.length;
+            if (n == 1) {
+                return "Prosím zadejte ještě jeden znak";
+            } else if (n <= 4) {
+                return "Prosím zadejte ještě další "+smallNumbers[n](true)+" znaky";
+            } else {
+                return "Prosím zadejte ještě dalších "+n+" znaků";
+            }
+        },
+        formatInputTooLong: function (input, max) {
+            var n = input.length - max;
+            if (n == 1) {
+                return "Prosím zadejte o jeden znak méně";
+            } else if (n <= 4) {
+                return "Prosím zadejte o "+smallNumbers[n](true)+" znaky méně";
+            } else {
+                return "Prosím zadejte o "+n+" znaků méně";
+            }
+        },
+        formatSelectionTooBig: function (limit) {
+            if (limit == 1) {
+                return "Můžete zvolit jen jednu položku";
+            } else if (limit <= 4) {
+                return "Můžete zvolit maximálně "+smallNumbers[limit](false)+" položky";
+            } else {
+                return "Můžete zvolit maximálně "+limit+" položek";
+            }
+        },
+        formatLoadMore: function (pageNumber) { return "Načítají se další výsledky…"; },
+        formatSearching: function () { return "Vyhledávání…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_da.js", function (exports, module) {
+/**
+ * Select2 Danish translation.
+ *
+ * Author: Anders Jenbo <anders@jenbo.dk>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Ingen resultater fundet"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Angiv venligst " + n + " tegn mere"; },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Angiv venligst " + n + " tegn mindre"; },
+        formatSelectionTooBig: function (limit) { return "Du kan kun vælge " + limit + " emne" + (limit === 1 ? "" : "r"); },
+        formatLoadMore: function (pageNumber) { return "Indlæser flere resultater…"; },
+        formatSearching: function () { return "Søger…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_de.js", function (exports, module) {
+/**
+ * Select2 German translation
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Keine Übereinstimmungen gefunden"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Bitte " + n + " Zeichen mehr eingeben"; },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Bitte " + n + " Zeichen weniger eingeben"; },
+        formatSelectionTooBig: function (limit) { return "Sie können nur " + limit + " Eintr" + (limit === 1 ? "ag" : "äge") + " auswählen"; },
+        formatLoadMore: function (pageNumber) { return "Lade mehr Ergebnisse…"; },
+        formatSearching: function () { return "Suche…"; }
+    });
+})(jQuery);
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_el.js", function (exports, module) {
+/**
+ * Select2 Greek translation.
+ * 
+ * @author  Uriy Efremochkin <efremochkin@uriy.me>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Δεν βρέθηκαν αποτελέσματα"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Παρακαλούμε εισάγετε " + n + " περισσότερο" + (n > 1 ? "υς" : "") + " χαρακτήρ" + (n > 1 ? "ες" : "α"); },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Παρακαλούμε διαγράψτε " + n + " χαρακτήρ" + (n > 1 ? "ες" : "α"); },
+        formatSelectionTooBig: function (limit) { return "Μπορείτε να επιλέξετε μόνο " + limit + " αντικείμεν" + (limit > 1 ? "α" : "ο"); },
+        formatLoadMore: function (pageNumber) { return "Φόρτωση περισσότερων…"; },
+        formatSearching: function () { return "Αναζήτηση…"; }
+    });
+})(jQuery);
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_es.js", function (exports, module) {
+/**
+ * Select2 Spanish translation
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "No se encontraron resultados"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Por favor, introduzca " + n + " car" + (n == 1? "ácter" : "acteres"); },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Por favor, elimine " + n + " car" + (n == 1? "ácter" : "acteres"); },
+        formatSelectionTooBig: function (limit) { return "Sólo puede seleccionar " + limit + " elemento" + (limit == 1 ? "" : "s"); },
+        formatLoadMore: function (pageNumber) { return "Cargando más resultados…"; },
+        formatSearching: function () { return "Buscando…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_et.js", function (exports, module) {
+/**
+ * Select2 Estonian translation.
+ *
+ * Author: Kuldar Kalvik <kuldar@kalvik.ee>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Tulemused puuduvad"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Sisesta " + n + " täht" + (n == 1 ? "" : "e") + " rohkem"; },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Sisesta " + n + " täht" + (n == 1? "" : "e") + " vähem"; },
+        formatSelectionTooBig: function (limit) { return "Saad vaid " + limit + " tulemus" + (limit == 1 ? "e" : "t") + " valida"; },
+        formatLoadMore: function (pageNumber) { return "Laen tulemusi.."; },
+        formatSearching: function () { return "Otsin.."; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_eu.js", function (exports, module) {
+/**
+ * Select2 Basque translation.
+ *
+ * Author: Julen Ruiz Aizpuru <julenx at gmail dot com>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () {
+          return "Ez da bat datorrenik aurkitu";
+        },
+        formatInputTooShort: function (input, min) {
+          var n = min - input.length;
+          if (n === 1) {
+            return "Idatzi karaktere bat gehiago";
+          } else {
+            return "Idatzi " + n + " karaktere gehiago";
+          }
+        },
+        formatInputTooLong: function (input, max) {
+          var n = input.length - max;
+          if (n === 1) {
+            return "Idatzi karaktere bat gutxiago";
+          } else {
+            return "Idatzi " + n + " karaktere gutxiago";
+          }
+        },
+        formatSelectionTooBig: function (limit) {
+          if (limit === 1 ) {
+            return "Elementu bakarra hauta dezakezu";
+          } else {
+            return limit + " elementu hauta ditzakezu soilik";
+          }
+        },
+        formatLoadMore: function (pageNumber) {
+          return "Emaitza gehiago kargatzen…";
+        },
+        formatSearching: function () {
+          return "Bilatzen…";
+        }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_fa.js", function (exports, module) {
+/**
+ * Select2 Persian translation.
+ * 
+ * Author: Ali Choopan <choopan@arsh.co>
+ * Author: Ebrahim Byagowi <ebrahim@gnu.org>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatMatches: function (matches) { return matches + " نتیجه موجود است، کلیدهای جهت بالا و پایین را برای گشتن استفاده کنید."; },
+        formatNoMatches: function () { return "نتیجه‌ای یافت نشد."; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "لطفاً " + n + " نویسه بیشتر وارد نمایید"; },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "لطفاً " + n + " نویسه را حذف کنید."; },
+        formatSelectionTooBig: function (limit) { return "شما فقط می‌توانید " + limit + " مورد را انتخاب کنید"; },
+        formatLoadMore: function (pageNumber) { return "در حال بارگیری موارد بیشتر…"; },
+        formatSearching: function () { return "در حال جستجو…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_fi.js", function (exports, module) {
+/**
+ * Select2 Finnish translation
+ */
+(function ($) {
+    "use strict";
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () {
+            return "Ei tuloksia";
+        },
+        formatInputTooShort: function (input, min) {
+            var n = min - input.length;
+            return "Ole hyvä ja anna " + n + " merkkiä lisää";
+        },
+        formatInputTooLong: function (input, max) {
+            var n = input.length - max;
+            return "Ole hyvä ja anna " + n + " merkkiä vähemmän";
+        },
+        formatSelectionTooBig: function (limit) {
+            return "Voit valita ainoastaan " + limit + " kpl";
+        },
+        formatLoadMore: function (pageNumber) {
+            return "Ladataan lisää tuloksia…";
+        },
+        formatSearching: function () {
+            return "Etsitään…";
+        }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_fr.js", function (exports, module) {
+/**
+ * Select2 French translation
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatMatches: function (matches) { return matches + " résultats sont disponibles, utilisez les flèches haut et bas pour naviguer."; },
+        formatNoMatches: function () { return "Aucun résultat trouvé"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Merci de saisir " + n + " caractère" + (n == 1 ? "" : "s") + " de plus"; },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Merci de supprimer " + n + " caractère" + (n == 1 ? "" : "s"); },
+        formatSelectionTooBig: function (limit) { return "Vous pouvez seulement sélectionner " + limit + " élément" + (limit == 1 ? "" : "s"); },
+        formatLoadMore: function (pageNumber) { return "Chargement de résultats supplémentaires…"; },
+        formatSearching: function () { return "Recherche en cours…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_gl.js", function (exports, module) {
+/**
+ * Select2 Galician translation
+ * 
+ * Author: Leandro Regueiro <leandro.regueiro@gmail.com>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () {
+            return "Non se atoparon resultados";
+        },
+        formatInputTooShort: function (input, min) {
+            var n = min - input.length;
+            if (n === 1) {
+                return "Engada un carácter";
+            } else {
+                return "Engada " + n + " caracteres";
+            }
+        },
+        formatInputTooLong: function (input, max) {
+            var n = input.length - max;
+            if (n === 1) {
+                return "Elimine un carácter";
+            } else {
+                return "Elimine " + n + " caracteres";
+            }
+        },
+        formatSelectionTooBig: function (limit) {
+            if (limit === 1 ) {
+                return "Só pode seleccionar un elemento";
+            } else {
+                return "Só pode seleccionar " + limit + " elementos";
+            }
+        },
+        formatLoadMore: function (pageNumber) {
+            return "Cargando máis resultados…";
+        },
+        formatSearching: function () {
+            return "Buscando…";
+        }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_he.js", function (exports, module) {
+/**
+* Select2 Hebrew translation.
+*
+* Author: Yakir Sitbon <http://www.yakirs.net/>
+*/
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "לא נמצאו התאמות"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "נא להזין עוד " + n + " תווים נוספים"; },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "נא להזין פחות " + n + " תווים"; },
+        formatSelectionTooBig: function (limit) { return "ניתן לבחור " + limit + " פריטים"; },
+        formatLoadMore: function (pageNumber) { return "טוען תוצאות נוספות…"; },
+        formatSearching: function () { return "מחפש…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_hr.js", function (exports, module) {
+/**
+ * Select2 Croatian translation.
+ *
+ * @author  Edi Modrić <edi.modric@gmail.com>
+ * @author  Uriy Efremochkin <efremochkin@uriy.me>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Nema rezultata"; },
+        formatInputTooShort: function (input, min) { return "Unesite još" + character(min - input.length); },
+        formatInputTooLong: function (input, max) { return "Unesite" + character(input.length - max) + " manje"; },
+        formatSelectionTooBig: function (limit) { return "Maksimalan broj odabranih stavki je " + limit; },
+        formatLoadMore: function (pageNumber) { return "Učitavanje rezultata…"; },
+        formatSearching: function () { return "Pretraga…"; }
+    });
+
+    function character (n) {
+        return " " + n + " znak" + (n%10 < 5 && n%10 > 0 && (n%100 < 5 || n%100 > 19) ? n%10 > 1 ? "a" : "" : "ova");
+    }
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_hu.js", function (exports, module) {
+/**
+ * Select2 Hungarian translation
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Nincs találat."; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Túl rövid. Még " + n + " karakter hiányzik."; },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Túl hosszú. " + n + " karakterrel több, mint kellene."; },
+        formatSelectionTooBig: function (limit) { return "Csak " + limit + " elemet lehet kiválasztani."; },
+        formatLoadMore: function (pageNumber) { return "Töltés…"; },
+        formatSearching: function () { return "Keresés…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_id.js", function (exports, module) {
+/**
+ * Select2 Indonesian translation.
+ * 
+ * Author: Ibrahim Yusuf <ibrahim7usuf@gmail.com>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Tidak ada data yang sesuai"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Masukkan " + n + " huruf lagi" + (n == 1 ? "" : "s"); },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Hapus " + n + " huruf" + (n == 1 ? "" : "s"); },
+        formatSelectionTooBig: function (limit) { return "Anda hanya dapat memilih " + limit + " pilihan" + (limit == 1 ? "" : "s"); },
+        formatLoadMore: function (pageNumber) { return "Mengambil data…"; },
+        formatSearching: function () { return "Mencari…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_is.js", function (exports, module) {
+/**
+ * Select2 Icelandic translation.
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Ekkert fannst"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Vinsamlegast skrifið " + n + " staf" + (n > 1 ? "i" : "") + " í viðbót"; },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Vinsamlegast styttið texta um " + n + " staf" + (n > 1 ? "i" : ""); },
+        formatSelectionTooBig: function (limit) { return "Þú getur aðeins valið " + limit + " atriði"; },
+        formatLoadMore: function (pageNumber) { return "Sæki fleiri niðurstöður…"; },
+        formatSearching: function () { return "Leita…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_it.js", function (exports, module) {
+/**
+ * Select2 Italian translation
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Nessuna corrispondenza trovata"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Inserisci ancora " + n + " caratter" + (n == 1? "e" : "i"); },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Inserisci " + n + " caratter" + (n == 1? "e" : "i") + " in meno"; },
+        formatSelectionTooBig: function (limit) { return "Puoi selezionare solo " + limit + " element" + (limit == 1 ? "o" : "i"); },
+        formatLoadMore: function (pageNumber) { return "Caricamento in corso…"; },
+        formatSearching: function () { return "Ricerca…"; }
+    });
+})(jQuery);
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_ja.js", function (exports, module) {
+/**
+ * Select2 Japanese translation.
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "該当なし"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "後" + n + "文字入れてください"; },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "検索文字列が" + n + "文字長すぎます"; },
+        formatSelectionTooBig: function (limit) { return "最多で" + limit + "項目までしか選択できません"; },
+        formatLoadMore: function (pageNumber) { return "読込中･･･"; },
+        formatSearching: function () { return "検索中･･･"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_ka.js", function (exports, module) {
+/**
+ * Select2 Georgian (Kartuli) translation.
+ * 
+ * Author: Dimitri Kurashvili dimakura@gmail.com
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "ვერ მოიძებნა"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "გთხოვთ შეიყვანოთ კიდევ " + n + " სიმბოლო"; },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "გთხოვთ წაშალოთ " + n + " სიმბოლო"; },
+        formatSelectionTooBig: function (limit) { return "თქვენ შეგიძლიათ მხოლოდ " + limit + " ჩანაწერის მონიშვნა"; },
+        formatLoadMore: function (pageNumber) { return "შედეგის ჩატვირთვა…"; },
+        formatSearching: function () { return "ძებნა…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_ko.js", function (exports, module) {
+/**
+ * Select2 Korean translation.
+ * 
+ * @author  Swen Mun <longfinfunnel@gmail.com>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "결과 없음"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "너무 짧습니다. "+n+"글자 더 입력해주세요."; },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "너무 깁니다. "+n+"글자 지워주세요."; },
+        formatSelectionTooBig: function (limit) { return "최대 "+limit+"개까지만 선택하실 수 있습니다."; },
+        formatLoadMore: function (pageNumber) { return "불러오는 중…"; },
+        formatSearching: function () { return "검색 중…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_lt.js", function (exports, module) {
+/**
+ * Select2 Lithuanian translation.
+ * 
+ * @author  CRONUS Karmalakas <cronus dot karmalakas at gmail dot com>
+ * @author  Uriy Efremochkin <efremochkin@uriy.me>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Atitikmenų nerasta"; },
+        formatInputTooShort: function (input, min) { return "Įrašykite dar" + character(min - input.length); },
+        formatInputTooLong: function (input, max) { return "Pašalinkite" + character(input.length - max); },
+        formatSelectionTooBig: function (limit) {
+        	return "Jūs galite pasirinkti tik " + limit + " element" + ((limit%100 > 9 && limit%100 < 21) || limit%10 == 0 ? "ų" : limit%10 > 1 ? "us" : "ą");
+        },
+        formatLoadMore: function (pageNumber) { return "Kraunama daugiau rezultatų…"; },
+        formatSearching: function () { return "Ieškoma…"; }
+    });
+
+    function character (n) {
+        return " " + n + " simbol" + ((n%100 > 9 && n%100 < 21) || n%10 == 0 ? "ių" : n%10 > 1 ? "ius" : "į");
+    }
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_lv.js", function (exports, module) {
+/**
+ * Select2 Latvian translation.
+ *
+ * @author  Uriy Efremochkin <efremochkin@uriy.me>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Sakritību nav"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Lūdzu ievadiet vēl " + n + " simbol" + (n == 11 ? "us" : n%10 == 1 ? "u" : "us"); },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Lūdzu ievadiet par " + n + " simbol" + (n == 11 ? "iem" : n%10 == 1 ? "u" : "iem") + " mazāk"; },
+        formatSelectionTooBig: function (limit) { return "Jūs varat izvēlēties ne vairāk kā " + limit + " element" + (limit == 11 ? "us" : limit%10 == 1 ? "u" : "us"); },
+        formatLoadMore: function (pageNumber) { return "Datu ielāde…"; },
+        formatSearching: function () { return "Meklēšana…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_mk.js", function (exports, module) {
+/**
+ * Select2 Macedonian translation.
+ * 
+ * Author: Marko Aleksic <psybaron@gmail.com>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Нема пронајдено совпаѓања"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Ве молиме внесете уште " + n + " карактер" + (n == 1 ? "" : "и"); },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Ве молиме внесете " + n + " помалку карактер" + (n == 1? "" : "и"); },
+        formatSelectionTooBig: function (limit) { return "Можете да изберете само " + limit + " ставк" + (limit == 1 ? "а" : "и"); },
+        formatLoadMore: function (pageNumber) { return "Вчитување резултати…"; },
+        formatSearching: function () { return "Пребарување…"; }
+    });
+})(jQuery);
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_ms.js", function (exports, module) {
+/**
+ * Select2 Malay translation.
+ * 
+ * Author: Kepoweran <kepoweran@gmail.com>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Tiada padanan yang ditemui"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Sila masukkan " + n + " aksara lagi"; },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Sila hapuskan " + n + " aksara"; },
+        formatSelectionTooBig: function (limit) { return "Anda hanya boleh memilih " + limit + " pilihan"; },
+        formatLoadMore: function (pageNumber) { return "Sedang memuatkan keputusan…"; },
+        formatSearching: function () { return "Mencari…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_nl.js", function (exports, module) {
+/**
+ * Select2 Dutch translation
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Geen resultaten gevonden"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Vul " + n + " karakter" + (n == 1? "" : "s") + " meer in"; },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Vul " + n + " karakter" + (n == 1? "" : "s") + " minder in"; },
+        formatSelectionTooBig: function (limit) { return "Maximaal " + limit + " item" + (limit == 1 ? "" : "s") + " toegestaan"; },
+        formatLoadMore: function (pageNumber) { return "Meer resultaten laden…"; },
+        formatSearching: function () { return "Zoeken…"; }
+    });
+})(jQuery);
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_no.js", function (exports, module) {
+/**
+ * Select2 Norwegian translation.
+ *
+ * Author: Torgeir Veimo <torgeir.veimo@gmail.com>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Ingen treff"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Vennligst skriv inn " + n + (n>1 ? " flere tegn" : " tegn til"); },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Vennligst fjern " + n + " tegn"; },
+        formatSelectionTooBig: function (limit) { return "Du kan velge maks " + limit + " elementer"; },
+        formatLoadMore: function (pageNumber) { return "Laster flere resultater…"; },
+        formatSearching: function () { return "Søker…"; }
+    });
+})(jQuery);
+
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_pl.js", function (exports, module) {
+/**
+ * Select2 Polish translation.
+ * 
+ * @author  Jan Kondratowicz <jan@kondratowicz.pl>
+ * @author  Uriy Efremochkin <efremochkin@uriy.me>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Brak wyników"; },
+        formatInputTooShort: function (input, min) { return "Wpisz jeszcze" + character(min - input.length, "znak", "i"); },
+        formatInputTooLong: function (input, max) { return "Wpisana fraza jest za długa o" + character(input.length - max, "znak", "i"); },
+        formatSelectionTooBig: function (limit) { return "Możesz zaznaczyć najwyżej" + character(limit, "element", "y"); },
+        formatLoadMore: function (pageNumber) { return "Ładowanie wyników…"; },
+        formatSearching: function () { return "Szukanie…"; }
+    });
+
+    function character (n, word, pluralSuffix) {
+        return " " + n + " " + word + (n == 1 ? "" : n%10 < 5 && n%10 > 1 && (n%100 < 5 || n%100 > 20) ? pluralSuffix : "ów");
+    }
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_pt-BR.js", function (exports, module) {
+/**
+ * Select2 Brazilian Portuguese translation
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Nenhum resultado encontrado"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Digite mais " + n + " caracter" + (n == 1? "" : "es"); },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Apague " + n + " caracter" + (n == 1? "" : "es"); },
+        formatSelectionTooBig: function (limit) { return "Só é possível selecionar " + limit + " elemento" + (limit == 1 ? "" : "s"); },
+        formatLoadMore: function (pageNumber) { return "Carregando mais resultados…"; },
+        formatSearching: function () { return "Buscando…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_pt-PT.js", function (exports, module) {
+/**
+ * Select2 Portuguese (Portugal) translation
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Nenhum resultado encontrado"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Introduza " + n + " car" + (n == 1 ? "ácter" : "acteres"); },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Apague " + n + " car" + (n == 1 ? "ácter" : "acteres"); },
+        formatSelectionTooBig: function (limit) { return "Só é possível selecionar " + limit + " elemento" + (limit == 1 ? "" : "s"); },
+        formatLoadMore: function (pageNumber) { return "A carregar mais resultados…"; },
+        formatSearching: function () { return "A pesquisar…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_ro.js", function (exports, module) {
+/**
+ * Select2 Romanian translation.
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Nu a fost găsit nimic"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Vă rugăm să introduceți incă " + n + " caracter" + (n == 1 ? "" : "e"); },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Vă rugăm să introduceți mai puțin de " + n + " caracter" + (n == 1? "" : "e"); },
+        formatSelectionTooBig: function (limit) { return "Aveți voie să selectați cel mult " + limit + " element" + (limit == 1 ? "" : "e"); },
+        formatLoadMore: function (pageNumber) { return "Se încarcă…"; },
+        formatSearching: function () { return "Căutare…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_ru.js", function (exports, module) {
+/**
+ * Select2 Russian translation.
+ *
+ * @author  Uriy Efremochkin <efremochkin@uriy.me>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Совпадений не найдено"; },
+        formatInputTooShort: function (input, min) { return "Пожалуйста, введите еще" + character(min - input.length); },
+        formatInputTooLong: function (input, max) { return "Пожалуйста, введите на" + character(input.length - max) + " меньше"; },
+        formatSelectionTooBig: function (limit) { return "Вы можете выбрать не более " + limit + " элемент" + (limit%10 == 1 && limit%100 != 11 ? "а" : "ов"); },
+        formatLoadMore: function (pageNumber) { return "Загрузка данных…"; },
+        formatSearching: function () { return "Поиск…"; }
+    });
+
+    function character (n) {
+        return " " + n + " символ" + (n%10 < 5 && n%10 > 0 && (n%100 < 5 || n%100 > 20) ? n%10 > 1 ? "a" : "" : "ов");
+    }
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_sk.js", function (exports, module) {
+/**
+ * Select2 Slovak translation.
+ *
+ * Author: David Vallner <david@vallner.net>
+ */
+(function ($) {
+    "use strict";
+    // use text for the numbers 2 through 4
+    var smallNumbers = {
+        2: function(masc) { return (masc ? "dva" : "dve"); },
+        3: function() { return "tri"; },
+        4: function() { return "štyri"; }
+    }
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Nenašli sa žiadne položky"; },
+        formatInputTooShort: function (input, min) {
+            var n = min - input.length;
+            if (n == 1) {
+                return "Prosím zadajte ešte jeden znak";
+            } else if (n <= 4) {
+                return "Prosím zadajte ešte ďalšie "+smallNumbers[n](true)+" znaky";
+            } else {
+                return "Prosím zadajte ešte ďalších "+n+" znakov";
+            }
+        },
+        formatInputTooLong: function (input, max) {
+            var n = input.length - max;
+            if (n == 1) {
+                return "Prosím zadajte o jeden znak menej";
+            } else if (n <= 4) {
+                return "Prosím zadajte o "+smallNumbers[n](true)+" znaky menej";
+            } else {
+                return "Prosím zadajte o "+n+" znakov menej";
+            }
+        },
+        formatSelectionTooBig: function (limit) {
+            if (limit == 1) {
+                return "Môžete zvoliť len jednu položku";
+            } else if (limit <= 4) {
+                return "Môžete zvoliť najviac "+smallNumbers[limit](false)+" položky";
+            } else {
+                return "Môžete zvoliť najviac "+limit+" položiek";
+            }
+        },
+        formatLoadMore: function (pageNumber) { return "Načítavajú sa ďalšie výsledky…"; },
+        formatSearching: function () { return "Vyhľadávanie…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_sv.js", function (exports, module) {
+/**
+ * Select2 Swedish translation.
+ *
+ * Author: Jens Rantil <jens.rantil@telavox.com>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Inga träffar"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Var god skriv in " + n + (n>1 ? " till tecken" : " tecken till"); },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Var god sudda ut " + n + " tecken"; },
+        formatSelectionTooBig: function (limit) { return "Du kan max välja " + limit + " element"; },
+        formatLoadMore: function (pageNumber) { return "Laddar fler resultat…"; },
+        formatSearching: function () { return "Söker…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_th.js", function (exports, module) {
+/**
+ * Select2 Thai translation.
+ *
+ * Author: Atsawin Chaowanakritsanakul <joke@nakhon.net>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "ไม่พบข้อมูล"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "โปรดพิมพ์เพิ่มอีก " + n + " ตัวอักษร"; },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "โปรดลบออก " + n + " ตัวอักษร"; },
+        formatSelectionTooBig: function (limit) { return "คุณสามารถเลือกได้ไม่เกิน " + limit + " รายการ"; },
+        formatLoadMore: function (pageNumber) { return "กำลังค้นข้อมูลเพิ่ม…"; },
+        formatSearching: function () { return "กำลังค้นข้อมูล…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_tr.js", function (exports, module) {
+/**
+ * Select2 Turkish translation.
+ * 
+ * Author: Salim KAYABAŞI <salim.kayabasi@gmail.com>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Sonuç bulunamadı"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "En az " + n + " karakter daha girmelisiniz"; },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return n + " karakter azaltmalısınız"; },
+        formatSelectionTooBig: function (limit) { return "Sadece " + limit + " seçim yapabilirsiniz"; },
+        formatLoadMore: function (pageNumber) { return "Daha fazla…"; },
+        formatSearching: function () { return "Aranıyor…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_uk.js", function (exports, module) {
+/**
+ * Select2 Ukrainian translation.
+ * 
+ * @author  bigmihail <bigmihail@bigmir.net>
+ * @author  Uriy Efremochkin <efremochkin@uriy.me>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatMatches: function (matches) { return character(matches, "результат") + " знайдено, використовуйте клавіші зі стрілками вверх та вниз для навігації."; },
+        formatNoMatches: function () { return "Нічого не знайдено"; },
+        formatInputTooShort: function (input, min) { return "Введіть буль ласка ще " + character(min - input.length, "символ"); },
+        formatInputTooLong: function (input, max) { return "Введіть буль ласка на " + character(input.length - max, "символ") + " менше"; },
+        formatSelectionTooBig: function (limit) { return "Ви можете вибрати лише " + character(limit, "елемент"); },
+        formatLoadMore: function (pageNumber) { return "Завантаження даних…"; },
+        formatSearching: function () { return "Пошук…"; }
+    });
+
+    function character (n, word) {
+        return n + " " + word + (n%10 < 5 && n%10 > 0 && (n%100 < 5 || n%100 > 19) ? n%10 > 1 ? "и" : "" : "ів");
+    }
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_vi.js", function (exports, module) {
+/**
+ * Select2 Vietnamese translation.
+ * 
+ * Author: Long Nguyen <olragon@gmail.com>
+ */
+(function ($) {
+    "use strict";
+
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "Không tìm thấy kết quả"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "Vui lòng nhập nhiều hơn " + n + " ký tự" + (n == 1 ? "" : "s"); },
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "Vui lòng nhập ít hơn " + n + " ký tự" + (n == 1? "" : "s"); },
+        formatSelectionTooBig: function (limit) { return "Chỉ có thể chọn được " + limit + " tùy chọn" + (limit == 1 ? "" : "s"); },
+        formatLoadMore: function (pageNumber) { return "Đang lấy thêm kết quả…"; },
+        formatSearching: function () { return "Đang tìm…"; }
+    });
+})(jQuery);
+
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_zh-CN.js", function (exports, module) {
+/**
+ * Select2 Chinese translation
+ */
+(function ($) {
+    "use strict";
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "没有找到匹配项"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "请再输入" + n + "个字符";},
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "请删掉" + n + "个字符";},
+        formatSelectionTooBig: function (limit) { return "你只能选择最多" + limit + "项"; },
+        formatLoadMore: function (pageNumber) { return "加载结果中…"; },
+        formatSearching: function () { return "搜索中…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("kpwebb~select2@3.4.8/select2_locale_zh-TW.js", function (exports, module) {
+/**
+ * Select2 Traditional Chinese translation
+ */
+(function ($) {
+    "use strict";
+    $.extend($.fn.select2.defaults, {
+        formatNoMatches: function () { return "沒有找到相符的項目"; },
+        formatInputTooShort: function (input, min) { var n = min - input.length; return "請再輸入" + n + "個字元";},
+        formatInputTooLong: function (input, max) { var n = input.length - max; return "請刪掉" + n + "個字元";},
+        formatSelectionTooBig: function (limit) { return "你只能選擇最多" + limit + "項"; },
+        formatLoadMore: function (pageNumber) { return "載入中…"; },
+        formatSearching: function () { return "搜尋中…"; }
+    });
+})(jQuery);
+
+});
+
+require.register("components~jquery@1.11.0", function (exports, module) {
 /*!
  * jQuery JavaScript Library v1.11.0
  * http://jquery.com/
@@ -16254,12685 +20767,8 @@ return jQuery;
 }));
 
 });
-require.register("kpwebb-select2/select2.js", function(exports, require, module){
-/*
-Copyright 2012 Igor Vaynberg
 
-Version: @@ver@@ Timestamp: @@timestamp@@
-
-This software is licensed under the Apache License, Version 2.0 (the "Apache License") or the GNU
-General Public License version 2 (the "GPL License"). You may choose either license to govern your
-use of this software only upon the condition that you accept all of the terms of either the Apache
-License or the GPL License.
-
-You may obtain a copy of the Apache License and the GPL License at:
-
-    http://www.apache.org/licenses/LICENSE-2.0
-    http://www.gnu.org/licenses/gpl-2.0.html
-
-Unless required by applicable law or agreed to in writing, software distributed under the
-Apache License or the GPL License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-CONDITIONS OF ANY KIND, either express or implied. See the Apache License and the GPL License for
-the specific language governing permissions and limitations under the Apache License and the GPL License.
-*/
-(function ($) {
-    if(typeof $.fn.each2 == "undefined") {
-        $.extend($.fn, {
-            /*
-            * 4-10 times faster .each replacement
-            * use it carefully, as it overrides jQuery context of element on each iteration
-            */
-            each2 : function (c) {
-                var j = $([0]), i = -1, l = this.length;
-                while (
-                    ++i < l
-                    && (j.context = j[0] = this[i])
-                    && c.call(j[0], i, j) !== false //"this"=DOM, i=index, j=jQuery object
-                );
-                return this;
-            }
-        });
-    }
-})(jQuery);
-
-(function ($, undefined) {
-    "use strict";
-    /*global document, window, jQuery, console */
-
-    if (window.Select2 !== undefined) {
-        return;
-    }
-
-    var KEY, AbstractSelect2, SingleSelect2, MultiSelect2, nextUid, sizer,
-        lastMousePosition={x:0,y:0}, $document, scrollBarDimensions,
-
-    KEY = {
-        TAB: 9,
-        ENTER: 13,
-        ESC: 27,
-        SPACE: 32,
-        LEFT: 37,
-        UP: 38,
-        RIGHT: 39,
-        DOWN: 40,
-        SHIFT: 16,
-        CTRL: 17,
-        ALT: 18,
-        PAGE_UP: 33,
-        PAGE_DOWN: 34,
-        HOME: 36,
-        END: 35,
-        BACKSPACE: 8,
-        DELETE: 46,
-        isArrow: function (k) {
-            k = k.which ? k.which : k;
-            switch (k) {
-            case KEY.LEFT:
-            case KEY.RIGHT:
-            case KEY.UP:
-            case KEY.DOWN:
-                return true;
-            }
-            return false;
-        },
-        isControl: function (e) {
-            var k = e.which;
-            switch (k) {
-            case KEY.SHIFT:
-            case KEY.CTRL:
-            case KEY.ALT:
-                return true;
-            }
-
-            if (e.metaKey) return true;
-
-            return false;
-        },
-        isFunctionKey: function (k) {
-            k = k.which ? k.which : k;
-            return k >= 112 && k <= 123;
-        }
-    },
-    MEASURE_SCROLLBAR_TEMPLATE = "<div class='select2-measure-scrollbar'></div>",
-
-    DIACRITICS = {"\u24B6":"A","\uFF21":"A","\u00C0":"A","\u00C1":"A","\u00C2":"A","\u1EA6":"A","\u1EA4":"A","\u1EAA":"A","\u1EA8":"A","\u00C3":"A","\u0100":"A","\u0102":"A","\u1EB0":"A","\u1EAE":"A","\u1EB4":"A","\u1EB2":"A","\u0226":"A","\u01E0":"A","\u00C4":"A","\u01DE":"A","\u1EA2":"A","\u00C5":"A","\u01FA":"A","\u01CD":"A","\u0200":"A","\u0202":"A","\u1EA0":"A","\u1EAC":"A","\u1EB6":"A","\u1E00":"A","\u0104":"A","\u023A":"A","\u2C6F":"A","\uA732":"AA","\u00C6":"AE","\u01FC":"AE","\u01E2":"AE","\uA734":"AO","\uA736":"AU","\uA738":"AV","\uA73A":"AV","\uA73C":"AY","\u24B7":"B","\uFF22":"B","\u1E02":"B","\u1E04":"B","\u1E06":"B","\u0243":"B","\u0182":"B","\u0181":"B","\u24B8":"C","\uFF23":"C","\u0106":"C","\u0108":"C","\u010A":"C","\u010C":"C","\u00C7":"C","\u1E08":"C","\u0187":"C","\u023B":"C","\uA73E":"C","\u24B9":"D","\uFF24":"D","\u1E0A":"D","\u010E":"D","\u1E0C":"D","\u1E10":"D","\u1E12":"D","\u1E0E":"D","\u0110":"D","\u018B":"D","\u018A":"D","\u0189":"D","\uA779":"D","\u01F1":"DZ","\u01C4":"DZ","\u01F2":"Dz","\u01C5":"Dz","\u24BA":"E","\uFF25":"E","\u00C8":"E","\u00C9":"E","\u00CA":"E","\u1EC0":"E","\u1EBE":"E","\u1EC4":"E","\u1EC2":"E","\u1EBC":"E","\u0112":"E","\u1E14":"E","\u1E16":"E","\u0114":"E","\u0116":"E","\u00CB":"E","\u1EBA":"E","\u011A":"E","\u0204":"E","\u0206":"E","\u1EB8":"E","\u1EC6":"E","\u0228":"E","\u1E1C":"E","\u0118":"E","\u1E18":"E","\u1E1A":"E","\u0190":"E","\u018E":"E","\u24BB":"F","\uFF26":"F","\u1E1E":"F","\u0191":"F","\uA77B":"F","\u24BC":"G","\uFF27":"G","\u01F4":"G","\u011C":"G","\u1E20":"G","\u011E":"G","\u0120":"G","\u01E6":"G","\u0122":"G","\u01E4":"G","\u0193":"G","\uA7A0":"G","\uA77D":"G","\uA77E":"G","\u24BD":"H","\uFF28":"H","\u0124":"H","\u1E22":"H","\u1E26":"H","\u021E":"H","\u1E24":"H","\u1E28":"H","\u1E2A":"H","\u0126":"H","\u2C67":"H","\u2C75":"H","\uA78D":"H","\u24BE":"I","\uFF29":"I","\u00CC":"I","\u00CD":"I","\u00CE":"I","\u0128":"I","\u012A":"I","\u012C":"I","\u0130":"I","\u00CF":"I","\u1E2E":"I","\u1EC8":"I","\u01CF":"I","\u0208":"I","\u020A":"I","\u1ECA":"I","\u012E":"I","\u1E2C":"I","\u0197":"I","\u24BF":"J","\uFF2A":"J","\u0134":"J","\u0248":"J","\u24C0":"K","\uFF2B":"K","\u1E30":"K","\u01E8":"K","\u1E32":"K","\u0136":"K","\u1E34":"K","\u0198":"K","\u2C69":"K","\uA740":"K","\uA742":"K","\uA744":"K","\uA7A2":"K","\u24C1":"L","\uFF2C":"L","\u013F":"L","\u0139":"L","\u013D":"L","\u1E36":"L","\u1E38":"L","\u013B":"L","\u1E3C":"L","\u1E3A":"L","\u0141":"L","\u023D":"L","\u2C62":"L","\u2C60":"L","\uA748":"L","\uA746":"L","\uA780":"L","\u01C7":"LJ","\u01C8":"Lj","\u24C2":"M","\uFF2D":"M","\u1E3E":"M","\u1E40":"M","\u1E42":"M","\u2C6E":"M","\u019C":"M","\u24C3":"N","\uFF2E":"N","\u01F8":"N","\u0143":"N","\u00D1":"N","\u1E44":"N","\u0147":"N","\u1E46":"N","\u0145":"N","\u1E4A":"N","\u1E48":"N","\u0220":"N","\u019D":"N","\uA790":"N","\uA7A4":"N","\u01CA":"NJ","\u01CB":"Nj","\u24C4":"O","\uFF2F":"O","\u00D2":"O","\u00D3":"O","\u00D4":"O","\u1ED2":"O","\u1ED0":"O","\u1ED6":"O","\u1ED4":"O","\u00D5":"O","\u1E4C":"O","\u022C":"O","\u1E4E":"O","\u014C":"O","\u1E50":"O","\u1E52":"O","\u014E":"O","\u022E":"O","\u0230":"O","\u00D6":"O","\u022A":"O","\u1ECE":"O","\u0150":"O","\u01D1":"O","\u020C":"O","\u020E":"O","\u01A0":"O","\u1EDC":"O","\u1EDA":"O","\u1EE0":"O","\u1EDE":"O","\u1EE2":"O","\u1ECC":"O","\u1ED8":"O","\u01EA":"O","\u01EC":"O","\u00D8":"O","\u01FE":"O","\u0186":"O","\u019F":"O","\uA74A":"O","\uA74C":"O","\u01A2":"OI","\uA74E":"OO","\u0222":"OU","\u24C5":"P","\uFF30":"P","\u1E54":"P","\u1E56":"P","\u01A4":"P","\u2C63":"P","\uA750":"P","\uA752":"P","\uA754":"P","\u24C6":"Q","\uFF31":"Q","\uA756":"Q","\uA758":"Q","\u024A":"Q","\u24C7":"R","\uFF32":"R","\u0154":"R","\u1E58":"R","\u0158":"R","\u0210":"R","\u0212":"R","\u1E5A":"R","\u1E5C":"R","\u0156":"R","\u1E5E":"R","\u024C":"R","\u2C64":"R","\uA75A":"R","\uA7A6":"R","\uA782":"R","\u24C8":"S","\uFF33":"S","\u1E9E":"S","\u015A":"S","\u1E64":"S","\u015C":"S","\u1E60":"S","\u0160":"S","\u1E66":"S","\u1E62":"S","\u1E68":"S","\u0218":"S","\u015E":"S","\u2C7E":"S","\uA7A8":"S","\uA784":"S","\u24C9":"T","\uFF34":"T","\u1E6A":"T","\u0164":"T","\u1E6C":"T","\u021A":"T","\u0162":"T","\u1E70":"T","\u1E6E":"T","\u0166":"T","\u01AC":"T","\u01AE":"T","\u023E":"T","\uA786":"T","\uA728":"TZ","\u24CA":"U","\uFF35":"U","\u00D9":"U","\u00DA":"U","\u00DB":"U","\u0168":"U","\u1E78":"U","\u016A":"U","\u1E7A":"U","\u016C":"U","\u00DC":"U","\u01DB":"U","\u01D7":"U","\u01D5":"U","\u01D9":"U","\u1EE6":"U","\u016E":"U","\u0170":"U","\u01D3":"U","\u0214":"U","\u0216":"U","\u01AF":"U","\u1EEA":"U","\u1EE8":"U","\u1EEE":"U","\u1EEC":"U","\u1EF0":"U","\u1EE4":"U","\u1E72":"U","\u0172":"U","\u1E76":"U","\u1E74":"U","\u0244":"U","\u24CB":"V","\uFF36":"V","\u1E7C":"V","\u1E7E":"V","\u01B2":"V","\uA75E":"V","\u0245":"V","\uA760":"VY","\u24CC":"W","\uFF37":"W","\u1E80":"W","\u1E82":"W","\u0174":"W","\u1E86":"W","\u1E84":"W","\u1E88":"W","\u2C72":"W","\u24CD":"X","\uFF38":"X","\u1E8A":"X","\u1E8C":"X","\u24CE":"Y","\uFF39":"Y","\u1EF2":"Y","\u00DD":"Y","\u0176":"Y","\u1EF8":"Y","\u0232":"Y","\u1E8E":"Y","\u0178":"Y","\u1EF6":"Y","\u1EF4":"Y","\u01B3":"Y","\u024E":"Y","\u1EFE":"Y","\u24CF":"Z","\uFF3A":"Z","\u0179":"Z","\u1E90":"Z","\u017B":"Z","\u017D":"Z","\u1E92":"Z","\u1E94":"Z","\u01B5":"Z","\u0224":"Z","\u2C7F":"Z","\u2C6B":"Z","\uA762":"Z","\u24D0":"a","\uFF41":"a","\u1E9A":"a","\u00E0":"a","\u00E1":"a","\u00E2":"a","\u1EA7":"a","\u1EA5":"a","\u1EAB":"a","\u1EA9":"a","\u00E3":"a","\u0101":"a","\u0103":"a","\u1EB1":"a","\u1EAF":"a","\u1EB5":"a","\u1EB3":"a","\u0227":"a","\u01E1":"a","\u00E4":"a","\u01DF":"a","\u1EA3":"a","\u00E5":"a","\u01FB":"a","\u01CE":"a","\u0201":"a","\u0203":"a","\u1EA1":"a","\u1EAD":"a","\u1EB7":"a","\u1E01":"a","\u0105":"a","\u2C65":"a","\u0250":"a","\uA733":"aa","\u00E6":"ae","\u01FD":"ae","\u01E3":"ae","\uA735":"ao","\uA737":"au","\uA739":"av","\uA73B":"av","\uA73D":"ay","\u24D1":"b","\uFF42":"b","\u1E03":"b","\u1E05":"b","\u1E07":"b","\u0180":"b","\u0183":"b","\u0253":"b","\u24D2":"c","\uFF43":"c","\u0107":"c","\u0109":"c","\u010B":"c","\u010D":"c","\u00E7":"c","\u1E09":"c","\u0188":"c","\u023C":"c","\uA73F":"c","\u2184":"c","\u24D3":"d","\uFF44":"d","\u1E0B":"d","\u010F":"d","\u1E0D":"d","\u1E11":"d","\u1E13":"d","\u1E0F":"d","\u0111":"d","\u018C":"d","\u0256":"d","\u0257":"d","\uA77A":"d","\u01F3":"dz","\u01C6":"dz","\u24D4":"e","\uFF45":"e","\u00E8":"e","\u00E9":"e","\u00EA":"e","\u1EC1":"e","\u1EBF":"e","\u1EC5":"e","\u1EC3":"e","\u1EBD":"e","\u0113":"e","\u1E15":"e","\u1E17":"e","\u0115":"e","\u0117":"e","\u00EB":"e","\u1EBB":"e","\u011B":"e","\u0205":"e","\u0207":"e","\u1EB9":"e","\u1EC7":"e","\u0229":"e","\u1E1D":"e","\u0119":"e","\u1E19":"e","\u1E1B":"e","\u0247":"e","\u025B":"e","\u01DD":"e","\u24D5":"f","\uFF46":"f","\u1E1F":"f","\u0192":"f","\uA77C":"f","\u24D6":"g","\uFF47":"g","\u01F5":"g","\u011D":"g","\u1E21":"g","\u011F":"g","\u0121":"g","\u01E7":"g","\u0123":"g","\u01E5":"g","\u0260":"g","\uA7A1":"g","\u1D79":"g","\uA77F":"g","\u24D7":"h","\uFF48":"h","\u0125":"h","\u1E23":"h","\u1E27":"h","\u021F":"h","\u1E25":"h","\u1E29":"h","\u1E2B":"h","\u1E96":"h","\u0127":"h","\u2C68":"h","\u2C76":"h","\u0265":"h","\u0195":"hv","\u24D8":"i","\uFF49":"i","\u00EC":"i","\u00ED":"i","\u00EE":"i","\u0129":"i","\u012B":"i","\u012D":"i","\u00EF":"i","\u1E2F":"i","\u1EC9":"i","\u01D0":"i","\u0209":"i","\u020B":"i","\u1ECB":"i","\u012F":"i","\u1E2D":"i","\u0268":"i","\u0131":"i","\u24D9":"j","\uFF4A":"j","\u0135":"j","\u01F0":"j","\u0249":"j","\u24DA":"k","\uFF4B":"k","\u1E31":"k","\u01E9":"k","\u1E33":"k","\u0137":"k","\u1E35":"k","\u0199":"k","\u2C6A":"k","\uA741":"k","\uA743":"k","\uA745":"k","\uA7A3":"k","\u24DB":"l","\uFF4C":"l","\u0140":"l","\u013A":"l","\u013E":"l","\u1E37":"l","\u1E39":"l","\u013C":"l","\u1E3D":"l","\u1E3B":"l","\u017F":"l","\u0142":"l","\u019A":"l","\u026B":"l","\u2C61":"l","\uA749":"l","\uA781":"l","\uA747":"l","\u01C9":"lj","\u24DC":"m","\uFF4D":"m","\u1E3F":"m","\u1E41":"m","\u1E43":"m","\u0271":"m","\u026F":"m","\u24DD":"n","\uFF4E":"n","\u01F9":"n","\u0144":"n","\u00F1":"n","\u1E45":"n","\u0148":"n","\u1E47":"n","\u0146":"n","\u1E4B":"n","\u1E49":"n","\u019E":"n","\u0272":"n","\u0149":"n","\uA791":"n","\uA7A5":"n","\u01CC":"nj","\u24DE":"o","\uFF4F":"o","\u00F2":"o","\u00F3":"o","\u00F4":"o","\u1ED3":"o","\u1ED1":"o","\u1ED7":"o","\u1ED5":"o","\u00F5":"o","\u1E4D":"o","\u022D":"o","\u1E4F":"o","\u014D":"o","\u1E51":"o","\u1E53":"o","\u014F":"o","\u022F":"o","\u0231":"o","\u00F6":"o","\u022B":"o","\u1ECF":"o","\u0151":"o","\u01D2":"o","\u020D":"o","\u020F":"o","\u01A1":"o","\u1EDD":"o","\u1EDB":"o","\u1EE1":"o","\u1EDF":"o","\u1EE3":"o","\u1ECD":"o","\u1ED9":"o","\u01EB":"o","\u01ED":"o","\u00F8":"o","\u01FF":"o","\u0254":"o","\uA74B":"o","\uA74D":"o","\u0275":"o","\u01A3":"oi","\u0223":"ou","\uA74F":"oo","\u24DF":"p","\uFF50":"p","\u1E55":"p","\u1E57":"p","\u01A5":"p","\u1D7D":"p","\uA751":"p","\uA753":"p","\uA755":"p","\u24E0":"q","\uFF51":"q","\u024B":"q","\uA757":"q","\uA759":"q","\u24E1":"r","\uFF52":"r","\u0155":"r","\u1E59":"r","\u0159":"r","\u0211":"r","\u0213":"r","\u1E5B":"r","\u1E5D":"r","\u0157":"r","\u1E5F":"r","\u024D":"r","\u027D":"r","\uA75B":"r","\uA7A7":"r","\uA783":"r","\u24E2":"s","\uFF53":"s","\u00DF":"s","\u015B":"s","\u1E65":"s","\u015D":"s","\u1E61":"s","\u0161":"s","\u1E67":"s","\u1E63":"s","\u1E69":"s","\u0219":"s","\u015F":"s","\u023F":"s","\uA7A9":"s","\uA785":"s","\u1E9B":"s","\u24E3":"t","\uFF54":"t","\u1E6B":"t","\u1E97":"t","\u0165":"t","\u1E6D":"t","\u021B":"t","\u0163":"t","\u1E71":"t","\u1E6F":"t","\u0167":"t","\u01AD":"t","\u0288":"t","\u2C66":"t","\uA787":"t","\uA729":"tz","\u24E4":"u","\uFF55":"u","\u00F9":"u","\u00FA":"u","\u00FB":"u","\u0169":"u","\u1E79":"u","\u016B":"u","\u1E7B":"u","\u016D":"u","\u00FC":"u","\u01DC":"u","\u01D8":"u","\u01D6":"u","\u01DA":"u","\u1EE7":"u","\u016F":"u","\u0171":"u","\u01D4":"u","\u0215":"u","\u0217":"u","\u01B0":"u","\u1EEB":"u","\u1EE9":"u","\u1EEF":"u","\u1EED":"u","\u1EF1":"u","\u1EE5":"u","\u1E73":"u","\u0173":"u","\u1E77":"u","\u1E75":"u","\u0289":"u","\u24E5":"v","\uFF56":"v","\u1E7D":"v","\u1E7F":"v","\u028B":"v","\uA75F":"v","\u028C":"v","\uA761":"vy","\u24E6":"w","\uFF57":"w","\u1E81":"w","\u1E83":"w","\u0175":"w","\u1E87":"w","\u1E85":"w","\u1E98":"w","\u1E89":"w","\u2C73":"w","\u24E7":"x","\uFF58":"x","\u1E8B":"x","\u1E8D":"x","\u24E8":"y","\uFF59":"y","\u1EF3":"y","\u00FD":"y","\u0177":"y","\u1EF9":"y","\u0233":"y","\u1E8F":"y","\u00FF":"y","\u1EF7":"y","\u1E99":"y","\u1EF5":"y","\u01B4":"y","\u024F":"y","\u1EFF":"y","\u24E9":"z","\uFF5A":"z","\u017A":"z","\u1E91":"z","\u017C":"z","\u017E":"z","\u1E93":"z","\u1E95":"z","\u01B6":"z","\u0225":"z","\u0240":"z","\u2C6C":"z","\uA763":"z","\u0386":"\u0391","\u0388":"\u0395","\u0389":"\u0397","\u038A":"\u0399","\u03AA":"\u0399","\u038C":"\u039F","\u038E":"\u03A5","\u03AB":"\u03A5","\u038F":"\u03A9","\u03AC":"\u03B1","\u03AD":"\u03B5","\u03AE":"\u03B7","\u03AF":"\u03B9","\u03CA":"\u03B9","\u0390":"\u03B9","\u03CC":"\u03BF","\u03CD":"\u03C5","\u03CB":"\u03C5","\u03B0":"\u03C5","\u03C9":"\u03C9","\u03C2":"\u03C3"};
-
-    $document = $(document);
-
-    nextUid=(function() { var counter=1; return function() { return counter++; }; }());
-
-
-    function reinsertElement(element) {
-        var placeholder = $(document.createTextNode(''));
-
-        element.before(placeholder);
-        placeholder.before(element);
-        placeholder.remove();
-    }
-
-    function stripDiacritics(str) {
-        // Used 'uni range + named function' from http://jsperf.com/diacritics/18
-        function match(a) {
-            return DIACRITICS[a] || a;
-        }
-
-        return str.replace(/[^\u0000-\u007E]/g, match);
-    }
-
-    function indexOf(value, array) {
-        var i = 0, l = array.length;
-        for (; i < l; i = i + 1) {
-            if (equal(value, array[i])) return i;
-        }
-        return -1;
-    }
-
-    function measureScrollbar () {
-        var $template = $( MEASURE_SCROLLBAR_TEMPLATE );
-        $template.appendTo('body');
-
-        var dim = {
-            width: $template.width() - $template[0].clientWidth,
-            height: $template.height() - $template[0].clientHeight
-        };
-        $template.remove();
-
-        return dim;
-    }
-
-    /**
-     * Compares equality of a and b
-     * @param a
-     * @param b
-     */
-    function equal(a, b) {
-        if (a === b) return true;
-        if (a === undefined || b === undefined) return false;
-        if (a === null || b === null) return false;
-        // Check whether 'a' or 'b' is a string (primitive or object).
-        // The concatenation of an empty string (+'') converts its argument to a string's primitive.
-        if (a.constructor === String) return a+'' === b+''; // a+'' - in case 'a' is a String object
-        if (b.constructor === String) return b+'' === a+''; // b+'' - in case 'b' is a String object
-        return false;
-    }
-
-    /**
-     * Splits the string into an array of values, trimming each value. An empty array is returned for nulls or empty
-     * strings
-     * @param string
-     * @param separator
-     */
-    function splitVal(string, separator) {
-        var val, i, l;
-        if (string === null || string.length < 1) return [];
-        val = string.split(separator);
-        for (i = 0, l = val.length; i < l; i = i + 1) val[i] = $.trim(val[i]);
-        return val;
-    }
-
-    function getSideBorderPadding(element) {
-        return element.outerWidth(false) - element.width();
-    }
-
-    function installKeyUpChangeEvent(element) {
-        var key="keyup-change-value";
-        element.on("keydown", function () {
-            if ($.data(element, key) === undefined) {
-                $.data(element, key, element.val());
-            }
-        });
-        element.on("keyup", function () {
-            var val= $.data(element, key);
-            if (val !== undefined && element.val() !== val) {
-                $.removeData(element, key);
-                element.trigger("keyup-change");
-            }
-        });
-    }
-
-
-    /**
-     * filters mouse events so an event is fired only if the mouse moved.
-     *
-     * filters out mouse events that occur when mouse is stationary but
-     * the elements under the pointer are scrolled.
-     */
-    function installFilteredMouseMove(element) {
-        element.on("mousemove", function (e) {
-            var lastpos = lastMousePosition;
-            if (lastpos === undefined || lastpos.x !== e.pageX || lastpos.y !== e.pageY) {
-                $(e.target).trigger("mousemove-filtered", e);
-            }
-        });
-    }
-
-    /**
-     * Debounces a function. Returns a function that calls the original fn function only if no invocations have been made
-     * within the last quietMillis milliseconds.
-     *
-     * @param quietMillis number of milliseconds to wait before invoking fn
-     * @param fn function to be debounced
-     * @param ctx object to be used as this reference within fn
-     * @return debounced version of fn
-     */
-    function debounce(quietMillis, fn, ctx) {
-        ctx = ctx || undefined;
-        var timeout;
-        return function () {
-            var args = arguments;
-            window.clearTimeout(timeout);
-            timeout = window.setTimeout(function() {
-                fn.apply(ctx, args);
-            }, quietMillis);
-        };
-    }
-
-    function installDebouncedScroll(threshold, element) {
-        var notify = debounce(threshold, function (e) { element.trigger("scroll-debounced", e);});
-        element.on("scroll", function (e) {
-            if (indexOf(e.target, element.get()) >= 0) notify(e);
-        });
-    }
-
-    function focus($el) {
-        if ($el[0] === document.activeElement) return;
-
-        /* set the focus in a 0 timeout - that way the focus is set after the processing
-            of the current event has finished - which seems like the only reliable way
-            to set focus */
-        window.setTimeout(function() {
-            var el=$el[0], pos=$el.val().length, range;
-
-            $el.focus();
-
-            /* make sure el received focus so we do not error out when trying to manipulate the caret.
-                sometimes modals or others listeners may steal it after its set */
-            var isVisible = (el.offsetWidth > 0 || el.offsetHeight > 0);
-            if (isVisible && el === document.activeElement) {
-
-                /* after the focus is set move the caret to the end, necessary when we val()
-                    just before setting focus */
-                if(el.setSelectionRange)
-                {
-                    el.setSelectionRange(pos, pos);
-                }
-                else if (el.createTextRange) {
-                    range = el.createTextRange();
-                    range.collapse(false);
-                    range.select();
-                }
-            }
-        }, 0);
-    }
-
-    function getCursorInfo(el) {
-        el = $(el)[0];
-        var offset = 0;
-        var length = 0;
-        if ('selectionStart' in el) {
-            offset = el.selectionStart;
-            length = el.selectionEnd - offset;
-        } else if ('selection' in document) {
-            el.focus();
-            var sel = document.selection.createRange();
-            length = document.selection.createRange().text.length;
-            sel.moveStart('character', -el.value.length);
-            offset = sel.text.length - length;
-        }
-        return { offset: offset, length: length };
-    }
-
-    function killEvent(event) {
-        event.preventDefault();
-        event.stopPropagation();
-    }
-    function killEventImmediately(event) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-    }
-
-    function measureTextWidth(e) {
-        if (!sizer){
-            var style = e[0].currentStyle || window.getComputedStyle(e[0], null);
-            sizer = $(document.createElement("div")).css({
-                position: "absolute",
-                left: "-10000px",
-                top: "-10000px",
-                display: "none",
-                fontSize: style.fontSize,
-                fontFamily: style.fontFamily,
-                fontStyle: style.fontStyle,
-                fontWeight: style.fontWeight,
-                letterSpacing: style.letterSpacing,
-                textTransform: style.textTransform,
-                whiteSpace: "nowrap"
-            });
-            sizer.attr("class","select2-sizer");
-            $("body").append(sizer);
-        }
-        sizer.text(e.val());
-        return sizer.width();
-    }
-
-    function syncCssClasses(dest, src, adapter) {
-        var classes, replacements = [], adapted;
-
-        classes = dest.attr("class");
-        if (classes) {
-            classes = '' + classes; // for IE which returns object
-            $(classes.split(" ")).each2(function() {
-                if (this.indexOf("select2-") === 0) {
-                    replacements.push(this);
-                }
-            });
-        }
-        classes = src.attr("class");
-        if (classes) {
-            classes = '' + classes; // for IE which returns object
-            $(classes.split(" ")).each2(function() {
-                if (this.indexOf("select2-") !== 0) {
-                    adapted = adapter(this);
-                    if (adapted) {
-                        replacements.push(adapted);
-                    }
-                }
-            });
-        }
-        dest.attr("class", replacements.join(" "));
-    }
-
-
-    function markMatch(text, term, markup, escapeMarkup) {
-        var match=stripDiacritics(text.toUpperCase()).indexOf(stripDiacritics(term.toUpperCase())),
-            tl=term.length;
-
-        if (match<0) {
-            markup.push(escapeMarkup(text));
-            return;
-        }
-
-        markup.push(escapeMarkup(text.substring(0, match)));
-        markup.push("<span class='select2-match'>");
-        markup.push(escapeMarkup(text.substring(match, match + tl)));
-        markup.push("</span>");
-        markup.push(escapeMarkup(text.substring(match + tl, text.length)));
-    }
-
-    function defaultEscapeMarkup(markup) {
-        var replace_map = {
-            '\\': '&#92;',
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#39;',
-            "/": '&#47;'
-        };
-
-        return String(markup).replace(/[&<>"'\/\\]/g, function (match) {
-            return replace_map[match];
-        });
-    }
-
-    /**
-     * Produces an ajax-based query function
-     *
-     * @param options object containing configuration parameters
-     * @param options.params parameter map for the transport ajax call, can contain such options as cache, jsonpCallback, etc. see $.ajax
-     * @param options.transport function that will be used to execute the ajax request. must be compatible with parameters supported by $.ajax
-     * @param options.url url for the data
-     * @param options.data a function(searchTerm, pageNumber, context) that should return an object containing query string parameters for the above url.
-     * @param options.dataType request data type: ajax, jsonp, other datatypes supported by jQuery's $.ajax function or the transport function if specified
-     * @param options.quietMillis (optional) milliseconds to wait before making the ajaxRequest, helps debounce the ajax function if invoked too often
-     * @param options.results a function(remoteData, pageNumber, query) that converts data returned form the remote request to the format expected by Select2.
-     *      The expected format is an object containing the following keys:
-     *      results array of objects that will be used as choices
-     *      more (optional) boolean indicating whether there are more results available
-     *      Example: {results:[{id:1, text:'Red'},{id:2, text:'Blue'}], more:true}
-     */
-    function ajax(options) {
-        var timeout, // current scheduled but not yet executed request
-            handler = null,
-            quietMillis = options.quietMillis || 100,
-            ajaxUrl = options.url,
-            self = this;
-
-        return function (query) {
-            window.clearTimeout(timeout);
-            timeout = window.setTimeout(function () {
-                var data = options.data, // ajax data function
-                    url = ajaxUrl, // ajax url string or function
-                    transport = options.transport || $.fn.select2.ajaxDefaults.transport,
-                    // deprecated - to be removed in 4.0  - use params instead
-                    deprecated = {
-                        type: options.type || 'GET', // set type of request (GET or POST)
-                        cache: options.cache || false,
-                        jsonpCallback: options.jsonpCallback||undefined,
-                        dataType: options.dataType||"json"
-                    },
-                    params = $.extend({}, $.fn.select2.ajaxDefaults.params, deprecated);
-
-                data = data ? data.call(self, query.term, query.page, query.context) : null;
-                url = (typeof url === 'function') ? url.call(self, query.term, query.page, query.context) : url;
-
-                if (handler && typeof handler.abort === "function") { handler.abort(); }
-
-                if (options.params) {
-                    if ($.isFunction(options.params)) {
-                        $.extend(params, options.params.call(self));
-                    } else {
-                        $.extend(params, options.params);
-                    }
-                }
-
-                $.extend(params, {
-                    url: url,
-                    dataType: options.dataType,
-                    data: data,
-                    success: function (data) {
-                        // TODO - replace query.page with query so users have access to term, page, etc.
-                        // added query as third paramter to keep backwards compatibility
-                        var results = options.results(data, query.page, query);
-                        query.callback(results);
-                    }
-                });
-                handler = transport.call(self, params);
-            }, quietMillis);
-        };
-    }
-
-    /**
-     * Produces a query function that works with a local array
-     *
-     * @param options object containing configuration parameters. The options parameter can either be an array or an
-     * object.
-     *
-     * If the array form is used it is assumed that it contains objects with 'id' and 'text' keys.
-     *
-     * If the object form is used it is assumed that it contains 'data' and 'text' keys. The 'data' key should contain
-     * an array of objects that will be used as choices. These objects must contain at least an 'id' key. The 'text'
-     * key can either be a String in which case it is expected that each element in the 'data' array has a key with the
-     * value of 'text' which will be used to match choices. Alternatively, text can be a function(item) that can extract
-     * the text.
-     */
-    function local(options) {
-        var data = options, // data elements
-            dataText,
-            tmp,
-            text = function (item) { return ""+item.text; }; // function used to retrieve the text portion of a data item that is matched against the search
-
-         if ($.isArray(data)) {
-            tmp = data;
-            data = { results: tmp };
-        }
-
-         if ($.isFunction(data) === false) {
-            tmp = data;
-            data = function() { return tmp; };
-        }
-
-        var dataItem = data();
-        if (dataItem.text) {
-            text = dataItem.text;
-            // if text is not a function we assume it to be a key name
-            if (!$.isFunction(text)) {
-                dataText = dataItem.text; // we need to store this in a separate variable because in the next step data gets reset and data.text is no longer available
-                text = function (item) { return item[dataText]; };
-            }
-        }
-
-        return function (query) {
-            var t = query.term, filtered = { results: [] }, process;
-            if (t === "") {
-                query.callback(data());
-                return;
-            }
-
-            process = function(datum, collection) {
-                var group, attr;
-                datum = datum[0];
-                if (datum.children) {
-                    group = {};
-                    for (attr in datum) {
-                        if (datum.hasOwnProperty(attr)) group[attr]=datum[attr];
-                    }
-                    group.children=[];
-                    $(datum.children).each2(function(i, childDatum) { process(childDatum, group.children); });
-                    if (group.children.length || query.matcher(t, text(group), datum)) {
-                        collection.push(group);
-                    }
-                } else {
-                    if (query.matcher(t, text(datum), datum)) {
-                        collection.push(datum);
-                    }
-                }
-            };
-
-            $(data().results).each2(function(i, datum) { process(datum, filtered.results); });
-            query.callback(filtered);
-        };
-    }
-
-    // TODO javadoc
-    function tags(data) {
-        var isFunc = $.isFunction(data);
-        return function (query) {
-            var t = query.term, filtered = {results: []};
-            var result = isFunc ? data(query) : data;
-            if ($.isArray(result)) {
-                $(result).each(function () {
-                    var isObject = this.text !== undefined,
-                        text = isObject ? this.text : this;
-                    if (t === "" || query.matcher(t, text)) {
-                        filtered.results.push(isObject ? this : {id: this, text: this});
-                    }
-                });
-                query.callback(filtered);
-            }
-        };
-    }
-
-    /**
-     * Checks if the formatter function should be used.
-     *
-     * Throws an error if it is not a function. Returns true if it should be used,
-     * false if no formatting should be performed.
-     *
-     * @param formatter
-     */
-    function checkFormatter(formatter, formatterName) {
-        if ($.isFunction(formatter)) return true;
-        if (!formatter) return false;
-        if (typeof(formatter) === 'string') return true;
-        throw new Error(formatterName +" must be a string, function, or falsy value");
-    }
-
-  /**
-   * Returns a given value
-   * If given a function, returns its output
-   *
-   * @param val string|function
-   * @param context value of "this" to be passed to function
-   * @returns {*}
-   */
-    function evaluate(val, context) {
-        if ($.isFunction(val)) {
-            var args = Array.prototype.slice.call(arguments, 2);
-            return val.apply(context, args);
-        }
-        return val;
-    }
-
-    function countResults(results) {
-        var count = 0;
-        $.each(results, function(i, item) {
-            if (item.children) {
-                count += countResults(item.children);
-            } else {
-                count++;
-            }
-        });
-        return count;
-    }
-
-    /**
-     * Default tokenizer. This function uses breaks the input on substring match of any string from the
-     * opts.tokenSeparators array and uses opts.createSearchChoice to create the choice object. Both of those
-     * two options have to be defined in order for the tokenizer to work.
-     *
-     * @param input text user has typed so far or pasted into the search field
-     * @param selection currently selected choices
-     * @param selectCallback function(choice) callback tho add the choice to selection
-     * @param opts select2's opts
-     * @return undefined/null to leave the current input unchanged, or a string to change the input to the returned value
-     */
-    function defaultTokenizer(input, selection, selectCallback, opts) {
-        var original = input, // store the original so we can compare and know if we need to tell the search to update its text
-            dupe = false, // check for whether a token we extracted represents a duplicate selected choice
-            token, // token
-            index, // position at which the separator was found
-            i, l, // looping variables
-            separator; // the matched separator
-
-        if (!opts.createSearchChoice || !opts.tokenSeparators || opts.tokenSeparators.length < 1) return undefined;
-
-        while (true) {
-            index = -1;
-
-            for (i = 0, l = opts.tokenSeparators.length; i < l; i++) {
-                separator = opts.tokenSeparators[i];
-                index = input.indexOf(separator);
-                if (index >= 0) break;
-            }
-
-            if (index < 0) break; // did not find any token separator in the input string, bail
-
-            token = input.substring(0, index);
-            input = input.substring(index + separator.length);
-
-            if (token.length > 0) {
-                token = opts.createSearchChoice.call(this, token, selection);
-                if (token !== undefined && token !== null && opts.id(token) !== undefined && opts.id(token) !== null) {
-                    dupe = false;
-                    for (i = 0, l = selection.length; i < l; i++) {
-                        if (equal(opts.id(token), opts.id(selection[i]))) {
-                            dupe = true; break;
-                        }
-                    }
-
-                    if (!dupe) selectCallback(token);
-                }
-            }
-        }
-
-        if (original!==input) return input;
-    }
-
-    function cleanupJQueryElements() {
-        var self = this;
-
-        $.each(arguments, function (i, element) {
-            self[element].remove();
-            self[element] = null;
-        });
-    }
-
-    /**
-     * Creates a new class
-     *
-     * @param superClass
-     * @param methods
-     */
-    function clazz(SuperClass, methods) {
-        var constructor = function () {};
-        constructor.prototype = new SuperClass;
-        constructor.prototype.constructor = constructor;
-        constructor.prototype.parent = SuperClass.prototype;
-        constructor.prototype = $.extend(constructor.prototype, methods);
-        return constructor;
-    }
-
-    AbstractSelect2 = clazz(Object, {
-
-        // abstract
-        bind: function (func) {
-            var self = this;
-            return function () {
-                func.apply(self, arguments);
-            };
-        },
-
-        // abstract
-        init: function (opts) {
-            var results, search, resultsSelector = ".select2-results";
-
-            // prepare options
-            this.opts = opts = this.prepareOpts(opts);
-
-            this.id=opts.id;
-
-            // destroy if called on an existing component
-            if (opts.element.data("select2") !== undefined &&
-                opts.element.data("select2") !== null) {
-                opts.element.data("select2").destroy();
-            }
-
-            this.container = this.createContainer();
-
-            this.liveRegion = $("<span>", {
-                    role: "status",
-                    "aria-live": "polite"
-                })
-                .addClass("select2-hidden-accessible")
-                .appendTo(document.body);
-
-            this.containerId="s2id_"+(opts.element.attr("id") || "autogen"+nextUid());
-            this.containerEventName= this.containerId
-                .replace(/([.])/g, '_')
-                .replace(/([;&,\-\.\+\*\~':"\!\^#$%@\[\]\(\)=>\|])/g, '\\$1');
-            this.container.attr("id", this.containerId);
-
-            this.container.attr("title", opts.element.attr("title"));
-
-            this.body = $("body");
-
-            syncCssClasses(this.container, this.opts.element, this.opts.adaptContainerCssClass);
-
-            this.container.attr("style", opts.element.attr("style"));
-            this.container.css(evaluate(opts.containerCss, this.opts.element));
-            this.container.addClass(evaluate(opts.containerCssClass, this.opts.element));
-
-            this.elementTabIndex = this.opts.element.attr("tabindex");
-
-            // swap container for the element
-            this.opts.element
-                .data("select2", this)
-                .attr("tabindex", "-1")
-                .before(this.container)
-                .on("click.select2", killEvent); // do not leak click events
-
-            this.container.data("select2", this);
-
-            this.dropdown = this.container.find(".select2-drop");
-
-            syncCssClasses(this.dropdown, this.opts.element, this.opts.adaptDropdownCssClass);
-
-            this.dropdown.addClass(evaluate(opts.dropdownCssClass, this.opts.element));
-            this.dropdown.data("select2", this);
-            this.dropdown.on("click", killEvent);
-
-            this.results = results = this.container.find(resultsSelector);
-            this.search = search = this.container.find("input.select2-input");
-
-            this.queryCount = 0;
-            this.resultsPage = 0;
-            this.context = null;
-
-            // initialize the container
-            this.initContainer();
-
-            this.container.on("click", killEvent);
-
-            installFilteredMouseMove(this.results);
-
-            this.dropdown.on("mousemove-filtered", resultsSelector, this.bind(this.highlightUnderEvent));
-            this.dropdown.on("touchstart touchmove touchend", resultsSelector, this.bind(function (event) {
-                this._touchEvent = true;
-                this.highlightUnderEvent(event);
-            }));
-            this.dropdown.on("touchmove", resultsSelector, this.bind(this.touchMoved));
-            this.dropdown.on("touchstart touchend", resultsSelector, this.bind(this.clearTouchMoved));
-
-            // Waiting for a click event on touch devices to select option and hide dropdown
-            // otherwise click will be triggered on an underlying element
-            this.dropdown.on('click', this.bind(function (event) {
-                if (this._touchEvent) {
-                    this._touchEvent = false;
-                    this.selectHighlighted();
-                }
-            }));
-
-            installDebouncedScroll(80, this.results);
-            this.dropdown.on("scroll-debounced", resultsSelector, this.bind(this.loadMoreIfNeeded));
-
-            // do not propagate change event from the search field out of the component
-            $(this.container).on("change", ".select2-input", function(e) {e.stopPropagation();});
-            $(this.dropdown).on("change", ".select2-input", function(e) {e.stopPropagation();});
-
-            // if jquery.mousewheel plugin is installed we can prevent out-of-bounds scrolling of results via mousewheel
-            if ($.fn.mousewheel) {
-                results.mousewheel(function (e, delta, deltaX, deltaY) {
-                    var top = results.scrollTop();
-                    if (deltaY > 0 && top - deltaY <= 0) {
-                        results.scrollTop(0);
-                        killEvent(e);
-                    } else if (deltaY < 0 && results.get(0).scrollHeight - results.scrollTop() + deltaY <= results.height()) {
-                        results.scrollTop(results.get(0).scrollHeight - results.height());
-                        killEvent(e);
-                    }
-                });
-            }
-
-            installKeyUpChangeEvent(search);
-            search.on("keyup-change input paste", this.bind(this.updateResults));
-            search.on("focus", function () { search.addClass("select2-focused"); });
-            search.on("blur", function () { search.removeClass("select2-focused");});
-
-            this.dropdown.on("mouseup", resultsSelector, this.bind(function (e) {
-                if ($(e.target).closest(".select2-result-selectable").length > 0) {
-                    this.highlightUnderEvent(e);
-                    this.selectHighlighted(e);
-                }
-            }));
-
-            // trap all mouse events from leaving the dropdown. sometimes there may be a modal that is listening
-            // for mouse events outside of itself so it can close itself. since the dropdown is now outside the select2's
-            // dom it will trigger the popup close, which is not what we want
-            // focusin can cause focus wars between modals and select2 since the dropdown is outside the modal.
-            this.dropdown.on("click mouseup mousedown touchstart touchend focusin", function (e) { e.stopPropagation(); });
-
-            this.nextSearchTerm = undefined;
-
-            if ($.isFunction(this.opts.initSelection)) {
-                // initialize selection based on the current value of the source element
-                this.initSelection();
-
-                // if the user has provided a function that can set selection based on the value of the source element
-                // we monitor the change event on the element and trigger it, allowing for two way synchronization
-                this.monitorSource();
-            }
-
-            if (opts.maximumInputLength !== null) {
-                this.search.attr("maxlength", opts.maximumInputLength);
-            }
-
-            var disabled = opts.element.prop("disabled");
-            if (disabled === undefined) disabled = false;
-            this.enable(!disabled);
-
-            var readonly = opts.element.prop("readonly");
-            if (readonly === undefined) readonly = false;
-            this.readonly(readonly);
-
-            // Calculate size of scrollbar
-            scrollBarDimensions = scrollBarDimensions || measureScrollbar();
-
-            this.autofocus = opts.element.prop("autofocus");
-            opts.element.prop("autofocus", false);
-            if (this.autofocus) this.focus();
-
-            this.search.attr("placeholder", opts.searchInputPlaceholder);
-        },
-
-        // abstract
-        destroy: function () {
-            var element=this.opts.element, select2 = element.data("select2");
-
-            this.close();
-
-            if (element.length && element[0].detachEvent) {
-                element.each(function () {
-                    this.detachEvent("onpropertychange", this._sync);
-                });
-            }
-            if (this.propertyObserver) {
-                this.propertyObserver.disconnect();
-                this.propertyObserver = null;
-            }
-            this._sync = null;
-
-            if (select2 !== undefined) {
-                select2.container.remove();
-                select2.liveRegion.remove();
-                select2.dropdown.remove();
-                element
-                    .removeClass("select2-offscreen")
-                    .removeData("select2")
-                    .off(".select2")
-                    .prop("autofocus", this.autofocus || false);
-                if (this.elementTabIndex) {
-                    element.attr({tabindex: this.elementTabIndex});
-                } else {
-                    element.removeAttr("tabindex");
-                }
-                element.show();
-            }
-
-            cleanupJQueryElements.call(this,
-                "container",
-                "liveRegion",
-                "dropdown",
-                "results",
-                "search"
-            );
-        },
-
-        // abstract
-        optionToData: function(element) {
-            if (element.is("option")) {
-                return {
-                    id:element.prop("value"),
-                    text:element.text(),
-                    element: element.get(),
-                    css: element.attr("class"),
-                    disabled: element.prop("disabled"),
-                    locked: equal(element.attr("locked"), "locked") || equal(element.data("locked"), true)
-                };
-            } else if (element.is("optgroup")) {
-                return {
-                    text:element.attr("label"),
-                    children:[],
-                    element: element.get(),
-                    css: element.attr("class")
-                };
-            }
-        },
-
-        // abstract
-        prepareOpts: function (opts) {
-            var element, select, idKey, ajaxUrl, self = this;
-
-            element = opts.element;
-
-            if (element.get(0).tagName.toLowerCase() === "select") {
-                this.select = select = opts.element;
-            }
-
-            if (select) {
-                // these options are not allowed when attached to a select because they are picked up off the element itself
-                $.each(["id", "multiple", "ajax", "query", "createSearchChoice", "initSelection", "data", "tags"], function () {
-                    if (this in opts) {
-                        throw new Error("Option '" + this + "' is not allowed for Select2 when attached to a <select> element.");
-                    }
-                });
-            }
-
-            opts = $.extend({}, {
-                populateResults: function(container, results, query) {
-                    var populate, id=this.opts.id, liveRegion=this.liveRegion;
-
-                    populate=function(results, container, depth) {
-
-                        var i, l, result, selectable, disabled, compound, node, label, innerContainer, formatted;
-
-                        results = opts.sortResults(results, container, query);
-
-                        // collect the created nodes for bulk append
-                        var nodes = [];
-                        for (i = 0, l = results.length; i < l; i = i + 1) {
-
-                            result=results[i];
-
-                            disabled = (result.disabled === true);
-                            selectable = (!disabled) && (id(result) !== undefined);
-
-                            compound=result.children && result.children.length > 0;
-
-                            node=$("<li></li>");
-                            node.addClass("select2-results-dept-"+depth);
-                            node.addClass("select2-result");
-                            node.addClass(selectable ? "select2-result-selectable" : "select2-result-unselectable");
-                            if (disabled) { node.addClass("select2-disabled"); }
-                            if (compound) { node.addClass("select2-result-with-children"); }
-                            node.addClass(self.opts.formatResultCssClass(result));
-                            node.attr("role", "presentation");
-
-                            label=$(document.createElement("div"));
-                            label.addClass("select2-result-label");
-                            label.attr("id", "select2-result-label-" + nextUid());
-                            label.attr("role", "option");
-
-                            formatted=opts.formatResult(result, label, query, self.opts.escapeMarkup);
-                            if (formatted!==undefined) {
-                                label.html(formatted);
-                                node.append(label);
-                            }
-
-
-                            if (compound) {
-
-                                innerContainer=$("<ul></ul>");
-                                innerContainer.addClass("select2-result-sub");
-                                populate(result.children, innerContainer, depth+1);
-                                node.append(innerContainer);
-                            }
-
-                            node.data("select2-data", result);
-                            nodes.push(node[0]);
-                        }
-
-                        // bulk append the created nodes
-                        container.append(nodes);
-                        liveRegion.text(opts.formatMatches(results.length));
-                    };
-
-                    populate(results, container, 0);
-                }
-            }, $.fn.select2.defaults, opts);
-
-            if (typeof(opts.id) !== "function") {
-                idKey = opts.id;
-                opts.id = function (e) { return e[idKey]; };
-            }
-
-            if ($.isArray(opts.element.data("select2Tags"))) {
-                if ("tags" in opts) {
-                    throw "tags specified as both an attribute 'data-select2-tags' and in options of Select2 " + opts.element.attr("id");
-                }
-                opts.tags=opts.element.data("select2Tags");
-            }
-
-            if (select) {
-                opts.query = this.bind(function (query) {
-                    var data = { results: [], more: false },
-                        term = query.term,
-                        children, placeholderOption, process;
-
-                    process=function(element, collection) {
-                        var group;
-                        if (element.is("option")) {
-                            if (query.matcher(term, element.text(), element)) {
-                                collection.push(self.optionToData(element));
-                            }
-                        } else if (element.is("optgroup")) {
-                            group=self.optionToData(element);
-                            element.children().each2(function(i, elm) { process(elm, group.children); });
-                            if (group.children.length>0) {
-                                collection.push(group);
-                            }
-                        }
-                    };
-
-                    children=element.children();
-
-                    // ignore the placeholder option if there is one
-                    if (this.getPlaceholder() !== undefined && children.length > 0) {
-                        placeholderOption = this.getPlaceholderOption();
-                        if (placeholderOption) {
-                            children=children.not(placeholderOption);
-                        }
-                    }
-
-                    children.each2(function(i, elm) { process(elm, data.results); });
-
-                    query.callback(data);
-                });
-                // this is needed because inside val() we construct choices from options and there id is hardcoded
-                opts.id=function(e) { return e.id; };
-            } else {
-                if (!("query" in opts)) {
-
-                    if ("ajax" in opts) {
-                        ajaxUrl = opts.element.data("ajax-url");
-                        if (ajaxUrl && ajaxUrl.length > 0) {
-                            opts.ajax.url = ajaxUrl;
-                        }
-                        opts.query = ajax.call(opts.element, opts.ajax);
-                    } else if ("data" in opts) {
-                        opts.query = local(opts.data);
-                    } else if ("tags" in opts) {
-                        opts.query = tags(opts.tags);
-                        if (opts.createSearchChoice === undefined) {
-                            opts.createSearchChoice = function (term) { return {id: $.trim(term), text: $.trim(term)}; };
-                        }
-                        if (opts.initSelection === undefined) {
-                            opts.initSelection = function (element, callback) {
-                                var data = [];
-                                $(splitVal(element.val(), opts.separator)).each(function () {
-                                    var obj = { id: this, text: this },
-                                        tags = opts.tags;
-                                    if ($.isFunction(tags)) tags=tags();
-                                    $(tags).each(function() { if (equal(this.id, obj.id)) { obj = this; return false; } });
-                                    data.push(obj);
-                                });
-
-                                callback(data);
-                            };
-                        }
-                    }
-                }
-            }
-            if (typeof(opts.query) !== "function") {
-                throw "query function not defined for Select2 " + opts.element.attr("id");
-            }
-
-            if (opts.createSearchChoicePosition === 'top') {
-                opts.createSearchChoicePosition = function(list, item) { list.unshift(item); };
-            }
-            else if (opts.createSearchChoicePosition === 'bottom') {
-                opts.createSearchChoicePosition = function(list, item) { list.push(item); };
-            }
-            else if (typeof(opts.createSearchChoicePosition) !== "function")  {
-                throw "invalid createSearchChoicePosition option must be 'top', 'bottom' or a custom function";
-            }
-
-            return opts;
-        },
-
-        /**
-         * Monitor the original element for changes and update select2 accordingly
-         */
-        // abstract
-        monitorSource: function () {
-            var el = this.opts.element, observer, self = this;
-
-            el.on("change.select2", this.bind(function (e) {
-                if (this.opts.element.data("select2-change-triggered") !== true) {
-                    this.initSelection();
-                }
-            }));
-
-            this._sync = this.bind(function () {
-
-                // sync enabled state
-                var disabled = el.prop("disabled");
-                if (disabled === undefined) disabled = false;
-                this.enable(!disabled);
-
-                var readonly = el.prop("readonly");
-                if (readonly === undefined) readonly = false;
-                this.readonly(readonly);
-
-                syncCssClasses(this.container, this.opts.element, this.opts.adaptContainerCssClass);
-                this.container.addClass(evaluate(this.opts.containerCssClass, this.opts.element));
-
-                syncCssClasses(this.dropdown, this.opts.element, this.opts.adaptDropdownCssClass);
-                this.dropdown.addClass(evaluate(this.opts.dropdownCssClass, this.opts.element));
-
-            });
-
-            // IE8-10 (IE9/10 won't fire propertyChange via attachEventListener)
-            if (el.length && el[0].attachEvent) {
-                el.each(function() {
-                    this.attachEvent("onpropertychange", self._sync);
-                });
-            }
-            
-            // safari, chrome, firefox, IE11
-            observer = window.MutationObserver || window.WebKitMutationObserver|| window.MozMutationObserver;
-            if (observer !== undefined) {
-                if (this.propertyObserver) { delete this.propertyObserver; this.propertyObserver = null; }
-                this.propertyObserver = new observer(function (mutations) {
-                    $.each(mutations, self._sync);
-                });
-                this.propertyObserver.observe(el.get(0), { attributes:true, subtree:false });
-            }
-        },
-
-        // abstract
-        triggerSelect: function(data) {
-            var evt = $.Event("select2-selecting", { val: this.id(data), object: data });
-            this.opts.element.trigger(evt);
-            return !evt.isDefaultPrevented();
-        },
-
-        /**
-         * Triggers the change event on the source element
-         */
-        // abstract
-        triggerChange: function (details) {
-
-            details = details || {};
-            details= $.extend({}, details, { type: "change", val: this.val() });
-            // prevents recursive triggering
-            this.opts.element.data("select2-change-triggered", true);
-            this.opts.element.trigger(details);
-            this.opts.element.data("select2-change-triggered", false);
-
-            // some validation frameworks ignore the change event and listen instead to keyup, click for selects
-            // so here we trigger the click event manually
-            this.opts.element.click();
-
-            // ValidationEngine ignores the change event and listens instead to blur
-            // so here we trigger the blur event manually if so desired
-            if (this.opts.blurOnChange)
-                this.opts.element.blur();
-        },
-
-        //abstract
-        isInterfaceEnabled: function()
-        {
-            return this.enabledInterface === true;
-        },
-
-        // abstract
-        enableInterface: function() {
-            var enabled = this._enabled && !this._readonly,
-                disabled = !enabled;
-
-            if (enabled === this.enabledInterface) return false;
-
-            this.container.toggleClass("select2-container-disabled", disabled);
-            this.close();
-            this.enabledInterface = enabled;
-
-            return true;
-        },
-
-        // abstract
-        enable: function(enabled) {
-            if (enabled === undefined) enabled = true;
-            if (this._enabled === enabled) return;
-            this._enabled = enabled;
-
-            this.opts.element.prop("disabled", !enabled);
-            this.enableInterface();
-        },
-
-        // abstract
-        disable: function() {
-            this.enable(false);
-        },
-
-        // abstract
-        readonly: function(enabled) {
-            if (enabled === undefined) enabled = false;
-            if (this._readonly === enabled) return;
-            this._readonly = enabled;
-
-            this.opts.element.prop("readonly", enabled);
-            this.enableInterface();
-        },
-
-        // abstract
-        opened: function () {
-            return (this.container) ? this.container.hasClass("select2-dropdown-open") : false;
-        },
-
-        // abstract
-        positionDropdown: function() {
-            var $dropdown = this.dropdown,
-                offset = this.container.offset(),
-                height = this.container.outerHeight(false),
-                width = this.container.outerWidth(false) - 10,
-                dropHeight = $dropdown.outerHeight(false),
-                $window = $(window),
-                windowWidth = $window.width(),
-                windowHeight = $window.height(),
-                viewPortRight = $window.scrollLeft() + windowWidth,
-                viewportBottom = $window.scrollTop() + windowHeight,
-                dropTop = offset.top + height,
-                dropLeft = offset.left,
-                enoughRoomBelow = dropTop + dropHeight <= viewportBottom,
-                enoughRoomAbove = (offset.top - dropHeight) >= $window.scrollTop(),
-                dropWidth = $dropdown.outerWidth(false),
-                enoughRoomOnRight = dropLeft + dropWidth <= viewPortRight,
-                aboveNow = $dropdown.hasClass("select2-drop-above"),
-                bodyOffset,
-                above,
-                changeDirection,
-                css,
-                resultsListNode;
-
-            // always prefer the current above/below alignment, unless there is not enough room
-            if (aboveNow) {
-                above = true;
-                if (!enoughRoomAbove && enoughRoomBelow) {
-                    changeDirection = true;
-                    above = false;
-                }
-            } else {
-                above = false;
-                if (!enoughRoomBelow && enoughRoomAbove) {
-                    changeDirection = true;
-                    above = true;
-                }
-            }
-
-            //if we are changing direction we need to get positions when dropdown is hidden;
-            if (changeDirection) {
-                $dropdown.hide();
-                offset = this.container.offset();
-                height = this.container.outerHeight(false);
-                width = this.container.outerWidth(false);
-                dropHeight = $dropdown.outerHeight(false);
-                viewPortRight = $window.scrollLeft() + windowWidth;
-                viewportBottom = $window.scrollTop() + windowHeight;
-                dropTop = offset.top + height;
-                dropLeft = offset.left;
-                dropWidth = $dropdown.outerWidth(false);
-                enoughRoomOnRight = dropLeft + dropWidth <= viewPortRight;
-                $dropdown.show();
-
-                // fix so the cursor does not move to the left within the search-textbox in IE
-                this.focusSearch();
-            }
-
-            if (this.opts.dropdownAutoWidth) {
-                resultsListNode = $('.select2-results', $dropdown)[0];
-                $dropdown.addClass('select2-drop-auto-width');
-                $dropdown.css('width', '');
-                // Add scrollbar width to dropdown if vertical scrollbar is present
-                dropWidth = $dropdown.outerWidth(false) + (resultsListNode.scrollHeight === resultsListNode.clientHeight ? 0 : scrollBarDimensions.width);
-                dropWidth > width ? width = dropWidth : dropWidth = width;
-                dropHeight = $dropdown.outerHeight(false);
-                enoughRoomOnRight = dropLeft + dropWidth <= viewPortRight;
-            }
-            else {
-                this.container.removeClass('select2-drop-auto-width');
-            }
-
-            //console.log("below/ droptop:", dropTop, "dropHeight", dropHeight, "sum", (dropTop+dropHeight)+" viewport bottom", viewportBottom, "enough?", enoughRoomBelow);
-            //console.log("above/ offset.top", offset.top, "dropHeight", dropHeight, "top", (offset.top-dropHeight), "scrollTop", this.body.scrollTop(), "enough?", enoughRoomAbove);
-
-            // fix positioning when body has an offset and is not position: static
-            if (this.body.css('position') !== 'static') {
-                bodyOffset = this.body.offset();
-                dropTop -= bodyOffset.top;
-                dropLeft -= bodyOffset.left;
-            }
-
-            if (!enoughRoomOnRight) {
-                dropLeft = offset.left + this.container.outerWidth(false) - dropWidth;
-            }
-
-            css =  {
-                left: dropLeft,
-                width: width
-            };
-
-            if (above) {
-                css.top = offset.top - dropHeight;
-                css.bottom = 'auto';
-                this.container.addClass("select2-drop-above");
-                $dropdown.addClass("select2-drop-above");
-            }
-            else {
-                css.top = dropTop;
-                css.bottom = 'auto';
-                this.container.removeClass("select2-drop-above");
-                $dropdown.removeClass("select2-drop-above");
-            }
-            css = $.extend(css, evaluate(this.opts.dropdownCss, this.opts.element));
-
-            $dropdown.css(css);
-        },
-
-        // abstract
-        shouldOpen: function() {
-            var event;
-
-            if (this.opened()) return false;
-
-            if (this._enabled === false || this._readonly === true) return false;
-
-            event = $.Event("select2-opening");
-            this.opts.element.trigger(event);
-            return !event.isDefaultPrevented();
-        },
-
-        // abstract
-        clearDropdownAlignmentPreference: function() {
-            // clear the classes used to figure out the preference of where the dropdown should be opened
-            this.container.removeClass("select2-drop-above");
-            this.dropdown.removeClass("select2-drop-above");
-        },
-
-        /**
-         * Opens the dropdown
-         *
-         * @return {Boolean} whether or not dropdown was opened. This method will return false if, for example,
-         * the dropdown is already open, or if the 'open' event listener on the element called preventDefault().
-         */
-        // abstract
-        open: function () {
-
-            if (!this.shouldOpen()) return false;
-
-            this.opening();
-
-            // Only bind the document mousemove when the dropdown is visible
-            $document.on("mousemove.select2Event", function (e) {
-                lastMousePosition.x = e.pageX;
-                lastMousePosition.y = e.pageY;
-            });
-            
-            return true;
-        },
-
-        /**
-         * Performs the opening of the dropdown
-         */
-        // abstract
-        opening: function() {
-            var cid = this.containerEventName,
-                scroll = "scroll." + cid,
-                resize = "resize."+cid,
-                orient = "orientationchange."+cid,
-                mask;
-
-            this.container.addClass("select2-dropdown-open").addClass("select2-container-active");
-
-            this.clearDropdownAlignmentPreference();
-
-            if(this.dropdown[0] !== this.body.children().last()[0]) {
-                this.dropdown.detach().appendTo(this.body);
-            }
-
-            // create the dropdown mask if doesn't already exist
-            mask = $("#select2-drop-mask");
-            if (mask.length == 0) {
-                mask = $(document.createElement("div"));
-                mask.attr("id","select2-drop-mask").attr("class","select2-drop-mask");
-                mask.hide();
-                mask.appendTo(this.body);
-                mask.on("mousedown touchstart click", function (e) {
-                    // Prevent IE from generating a click event on the body
-                    reinsertElement(mask);
-
-                    var dropdown = $("#select2-drop"), self;
-                    if (dropdown.length > 0) {
-                        self=dropdown.data("select2");
-                        if (self.opts.selectOnBlur) {
-                            self.selectHighlighted({noFocus: true});
-                        }
-                        self.close();
-                        e.preventDefault();
-                        e.stopPropagation();
-                    }
-                });
-            }
-
-            // ensure the mask is always right before the dropdown
-            if (this.dropdown.prev()[0] !== mask[0]) {
-                this.dropdown.before(mask);
-            }
-
-            // move the global id to the correct dropdown
-            $("#select2-drop").removeAttr("id");
-            this.dropdown.attr("id", "select2-drop");
-
-            // show the elements
-            mask.show();
-
-            this.positionDropdown();
-            this.dropdown.show();
-            this.positionDropdown();
-
-            this.dropdown.addClass("select2-drop-active");
-
-            // attach listeners to events that can change the position of the container and thus require
-            // the position of the dropdown to be updated as well so it does not come unglued from the container
-            var that = this;
-            this.container.parents().add(window).each(function () {
-                $(this).on(resize+" "+scroll+" "+orient, function (e) {
-                    if (that.opened()) that.positionDropdown();
-                });
-            });
-
-
-        },
-
-        // abstract
-        close: function () {
-            if (!this.opened()) return;
-
-            var cid = this.containerEventName,
-                scroll = "scroll." + cid,
-                resize = "resize."+cid,
-                orient = "orientationchange."+cid;
-
-            // unbind event listeners
-            this.container.parents().add(window).each(function () { $(this).off(scroll).off(resize).off(orient); });
-
-            this.clearDropdownAlignmentPreference();
-
-            $("#select2-drop-mask").hide();
-            this.dropdown.removeAttr("id"); // only the active dropdown has the select2-drop id
-            this.dropdown.hide();
-            this.container.removeClass("select2-dropdown-open").removeClass("select2-container-active");
-            this.results.empty();
-
-            // Now that the dropdown is closed, unbind the global document mousemove event
-            $document.off("mousemove.select2Event");
-
-            this.clearSearch();
-            this.search.removeClass("select2-active");
-            this.opts.element.trigger($.Event("select2-close"));
-        },
-
-        /**
-         * Opens control, sets input value, and updates results.
-         */
-        // abstract
-        externalSearch: function (term) {
-            this.open();
-            this.search.val(term);
-            this.updateResults(false);
-        },
-
-        // abstract
-        clearSearch: function () {
-
-        },
-
-        //abstract
-        getMaximumSelectionSize: function() {
-            return evaluate(this.opts.maximumSelectionSize, this.opts.element);
-        },
-
-        // abstract
-        ensureHighlightVisible: function () {
-            var results = this.results, children, index, child, hb, rb, y, more;
-
-            index = this.highlight();
-
-            if (index < 0) return;
-
-            if (index == 0) {
-
-                // if the first element is highlighted scroll all the way to the top,
-                // that way any unselectable headers above it will also be scrolled
-                // into view
-
-                results.scrollTop(0);
-                return;
-            }
-
-            children = this.findHighlightableChoices().find('.select2-result-label');
-
-            child = $(children[index]);
-
-            hb = child.offset().top + child.outerHeight(true);
-
-            // if this is the last child lets also make sure select2-more-results is visible
-            if (index === children.length - 1) {
-                more = results.find("li.select2-more-results");
-                if (more.length > 0) {
-                    hb = more.offset().top + more.outerHeight(true);
-                }
-            }
-
-            rb = results.offset().top + results.outerHeight(true);
-            if (hb > rb) {
-                results.scrollTop(results.scrollTop() + (hb - rb));
-            }
-            y = child.offset().top - results.offset().top;
-
-            // make sure the top of the element is visible
-            if (y < 0 && child.css('display') != 'none' ) {
-                results.scrollTop(results.scrollTop() + y); // y is negative
-            }
-        },
-
-        // abstract
-        findHighlightableChoices: function() {
-            return this.results.find(".select2-result-selectable:not(.select2-disabled):not(.select2-selected)");
-        },
-
-        // abstract
-        moveHighlight: function (delta) {
-            var choices = this.findHighlightableChoices(),
-                index = this.highlight();
-
-            while (index > -1 && index < choices.length) {
-                index += delta;
-                var choice = $(choices[index]);
-                if (choice.hasClass("select2-result-selectable") && !choice.hasClass("select2-disabled") && !choice.hasClass("select2-selected")) {
-                    this.highlight(index);
-                    break;
-                }
-            }
-        },
-
-        // abstract
-        highlight: function (index) {
-            var choices = this.findHighlightableChoices(),
-                choice,
-                data;
-
-            if (arguments.length === 0) {
-                return indexOf(choices.filter(".select2-highlighted")[0], choices.get());
-            }
-
-            if (index >= choices.length) index = choices.length - 1;
-            if (index < 0) index = 0;
-
-            this.removeHighlight();
-
-            choice = $(choices[index]);
-            choice.addClass("select2-highlighted");
-
-            // ensure assistive technology can determine the active choice
-            this.search.attr("aria-activedescendant", choice.find(".select2-result-label").attr("id"));
-
-            this.ensureHighlightVisible();
-
-            this.liveRegion.text(choice.text());
-
-            data = choice.data("select2-data");
-            if (data) {
-                this.opts.element.trigger({ type: "select2-highlight", val: this.id(data), choice: data });
-            }
-        },
-
-        removeHighlight: function() {
-            this.results.find(".select2-highlighted").removeClass("select2-highlighted");
-        },
-
-        touchMoved: function() {
-            this._touchMoved = true;
-        },
-
-        clearTouchMoved: function() {
-          this._touchMoved = false;
-        },
-
-        // abstract
-        countSelectableResults: function() {
-            return this.findHighlightableChoices().length;
-        },
-
-        // abstract
-        highlightUnderEvent: function (event) {
-            var el = $(event.target).closest(".select2-result-selectable");
-            if (el.length > 0 && !el.is(".select2-highlighted")) {
-                var choices = this.findHighlightableChoices();
-                this.highlight(choices.index(el));
-            } else if (el.length == 0) {
-                // if we are over an unselectable item remove all highlights
-                this.removeHighlight();
-            }
-        },
-
-        // abstract
-        loadMoreIfNeeded: function () {
-            var results = this.results,
-                more = results.find("li.select2-more-results"),
-                below, // pixels the element is below the scroll fold, below==0 is when the element is starting to be visible
-                page = this.resultsPage + 1,
-                self=this,
-                term=this.search.val(),
-                context=this.context;
-
-            if (more.length === 0) return;
-            below = more.offset().top - results.offset().top - results.height();
-
-            if (below <= this.opts.loadMorePadding) {
-                more.addClass("select2-active");
-                this.opts.query({
-                        element: this.opts.element,
-                        term: term,
-                        page: page,
-                        context: context,
-                        matcher: this.opts.matcher,
-                        callback: this.bind(function (data) {
-
-                    // ignore a response if the select2 has been closed before it was received
-                    if (!self.opened()) return;
-
-
-                    self.opts.populateResults.call(this, results, data.results, {term: term, page: page, context:context});
-                    self.postprocessResults(data, false, false);
-
-                    if (data.more===true) {
-                        more.detach().appendTo(results).text(evaluate(self.opts.formatLoadMore, self.opts.element, page+1));
-                        window.setTimeout(function() { self.loadMoreIfNeeded(); }, 10);
-                    } else {
-                        more.remove();
-                    }
-                    self.positionDropdown();
-                    self.resultsPage = page;
-                    self.context = data.context;
-                    this.opts.element.trigger({ type: "select2-loaded", items: data });
-                })});
-            }
-        },
-
-        /**
-         * Default tokenizer function which does nothing
-         */
-        tokenize: function() {
-
-        },
-
-        /**
-         * @param initial whether or not this is the call to this method right after the dropdown has been opened
-         */
-        // abstract
-        updateResults: function (initial) {
-            var search = this.search,
-                results = this.results,
-                opts = this.opts,
-                data,
-                self = this,
-                input,
-                term = search.val(),
-                lastTerm = $.data(this.container, "select2-last-term"),
-                // sequence number used to drop out-of-order responses
-                queryNumber;
-
-            // prevent duplicate queries against the same term
-            if (initial !== true && lastTerm && equal(term, lastTerm)) return;
-
-            $.data(this.container, "select2-last-term", term);
-
-            // if the search is currently hidden we do not alter the results
-            if (initial !== true && (this.showSearchInput === false || !this.opened())) {
-                return;
-            }
-
-            function postRender() {
-                search.removeClass("select2-active");
-                self.positionDropdown();
-                if (results.find('.select2-no-results,.select2-selection-limit,.select2-searching').length) {
-                    self.liveRegion.text(results.text());
-                }
-                else {
-                    self.liveRegion.text(self.opts.formatMatches(results.find('.select2-result-selectable').length));
-                }
-            }
-
-            function render(html) {
-                results.html(html);
-                postRender();
-            }
-
-            queryNumber = ++this.queryCount;
-
-            var maxSelSize = this.getMaximumSelectionSize();
-            if (maxSelSize >=1) {
-                data = this.data();
-                if ($.isArray(data) && data.length >= maxSelSize && checkFormatter(opts.formatSelectionTooBig, "formatSelectionTooBig")) {
-                    render("<li class='select2-selection-limit'>" + evaluate(opts.formatSelectionTooBig, opts.element, maxSelSize) + "</li>");
-                    return;
-                }
-            }
-
-            if (search.val().length < opts.minimumInputLength) {
-                if (checkFormatter(opts.formatInputTooShort, "formatInputTooShort")) {
-                    render("<li class='select2-no-results'>" + evaluate(opts.formatInputTooShort, opts.element, search.val(), opts.minimumInputLength) + "</li>");
-                } else {
-                    render("");
-                }
-                if (initial && this.showSearch) this.showSearch(true);
-                return;
-            }
-
-            if (opts.maximumInputLength && search.val().length > opts.maximumInputLength) {
-                if (checkFormatter(opts.formatInputTooLong, "formatInputTooLong")) {
-                    render("<li class='select2-no-results'>" + evaluate(opts.formatInputTooLong, opts.element, search.val(), opts.maximumInputLength) + "</li>");
-                } else {
-                    render("");
-                }
-                return;
-            }
-
-            if (opts.formatSearching && this.findHighlightableChoices().length === 0) {
-                render("<li class='select2-searching'>" + evaluate(opts.formatSearching, opts.element) + "</li>");
-            }
-
-            search.addClass("select2-active");
-
-            this.removeHighlight();
-
-            // give the tokenizer a chance to pre-process the input
-            input = this.tokenize();
-            if (input != undefined && input != null) {
-                search.val(input);
-            }
-
-            this.resultsPage = 1;
-
-            opts.query({
-                element: opts.element,
-                    term: search.val(),
-                    page: this.resultsPage,
-                    context: null,
-                    matcher: opts.matcher,
-                    callback: this.bind(function (data) {
-                var def; // default choice
-
-                // ignore old responses
-                if (queryNumber != this.queryCount) {
-                  return;
-                }
-
-                // ignore a response if the select2 has been closed before it was received
-                if (!this.opened()) {
-                    this.search.removeClass("select2-active");
-                    return;
-                }
-
-                // save context, if any
-                this.context = (data.context===undefined) ? null : data.context;
-                // create a default choice and prepend it to the list
-                if (this.opts.createSearchChoice && search.val() !== "") {
-                    def = this.opts.createSearchChoice.call(self, search.val(), data.results);
-                    if (def !== undefined && def !== null && self.id(def) !== undefined && self.id(def) !== null) {
-                        if ($(data.results).filter(
-                            function () {
-                                return equal(self.id(this), self.id(def));
-                            }).length === 0) {
-                            this.opts.createSearchChoicePosition(data.results, def);
-                        }
-                    }
-                }
-
-                if (data.results.length === 0 && checkFormatter(opts.formatNoMatches, "formatNoMatches")) {
-                    render("<li class='select2-no-results'>" + evaluate(opts.formatNoMatches, opts.element, search.val()) + "</li>");
-                    return;
-                }
-
-                results.empty();
-                self.opts.populateResults.call(this, results, data.results, {term: search.val(), page: this.resultsPage, context:null});
-
-                if (data.more === true && checkFormatter(opts.formatLoadMore, "formatLoadMore")) {
-                    results.append("<li class='select2-more-results'>" + opts.escapeMarkup(evaluate(opts.formatLoadMore, opts.element, this.resultsPage)) + "</li>");
-                    window.setTimeout(function() { self.loadMoreIfNeeded(); }, 10);
-                }
-
-                this.postprocessResults(data, initial);
-
-                postRender();
-
-                this.opts.element.trigger({ type: "select2-loaded", items: data });
-            })});
-        },
-
-        // abstract
-        cancel: function () {
-            this.close();
-        },
-
-        // abstract
-        blur: function () {
-            // if selectOnBlur == true, select the currently highlighted option
-            if (this.opts.selectOnBlur)
-                this.selectHighlighted({noFocus: true});
-
-            this.close();
-            this.container.removeClass("select2-container-active");
-            // synonymous to .is(':focus'), which is available in jquery >= 1.6
-            if (this.search[0] === document.activeElement) { this.search.blur(); }
-            this.clearSearch();
-            this.selection.find(".select2-search-choice-focus").removeClass("select2-search-choice-focus");
-        },
-
-        // abstract
-        focusSearch: function () {
-            focus(this.search);
-        },
-
-        // abstract
-        selectHighlighted: function (options) {
-            if (this._touchMoved) {
-              this.clearTouchMoved();
-              return;
-            }
-            var index=this.highlight(),
-                highlighted=this.results.find(".select2-highlighted"),
-                data = highlighted.closest('.select2-result').data("select2-data");
-
-            if (data) {
-                this.highlight(index);
-                this.onSelect(data, options);
-            } else if (options && options.noFocus) {
-                this.close();
-            }
-        },
-
-        // abstract
-        getPlaceholder: function () {
-            var placeholderOption;
-            return this.opts.element.attr("placeholder") ||
-                this.opts.element.attr("data-placeholder") || // jquery 1.4 compat
-                this.opts.element.data("placeholder") ||
-                this.opts.placeholder ||
-                ((placeholderOption = this.getPlaceholderOption()) !== undefined ? placeholderOption.text() : undefined);
-        },
-
-        // abstract
-        getPlaceholderOption: function() {
-            if (this.select) {
-                var firstOption = this.select.children('option').first();
-                if (this.opts.placeholderOption !== undefined ) {
-                    //Determine the placeholder option based on the specified placeholderOption setting
-                    return (this.opts.placeholderOption === "first" && firstOption) ||
-                           (typeof this.opts.placeholderOption === "function" && this.opts.placeholderOption(this.select));
-                } else if ($.trim(firstOption.text()) === "" && firstOption.val() === "") {
-                    //No explicit placeholder option specified, use the first if it's blank
-                    return firstOption;
-                }
-            }
-        },
-
-        /**
-         * Get the desired width for the container element.  This is
-         * derived first from option `width` passed to select2, then
-         * the inline 'style' on the original element, and finally
-         * falls back to the jQuery calculated element width.
-         */
-        // abstract
-        initContainerWidth: function () {
-            function resolveContainerWidth() {
-                var style, attrs, matches, i, l, attr;
-
-                if (this.opts.width === "off") {
-                    return null;
-                } else if (this.opts.width === "element"){
-                    return this.opts.element.outerWidth(false) === 0 ? 'auto' : this.opts.element.outerWidth(false) + 'px';
-                } else if (this.opts.width === "copy" || this.opts.width === "resolve") {
-                    // check if there is inline style on the element that contains width
-                    style = this.opts.element.attr('style');
-                    if (style !== undefined) {
-                        attrs = style.split(';');
-                        for (i = 0, l = attrs.length; i < l; i = i + 1) {
-                            attr = attrs[i].replace(/\s/g, '');
-                            matches = attr.match(/^width:(([-+]?([0-9]*\.)?[0-9]+)(px|em|ex|%|in|cm|mm|pt|pc))/i);
-                            if (matches !== null && matches.length >= 1)
-                                return matches[1];
-                        }
-                    }
-
-                    if (this.opts.width === "resolve") {
-                        // next check if css('width') can resolve a width that is percent based, this is sometimes possible
-                        // when attached to input type=hidden or elements hidden via css
-                        style = this.opts.element.css('width');
-                        if (style.indexOf("%") > 0) return style;
-
-                        // finally, fallback on the calculated width of the element
-                        return (this.opts.element.outerWidth(false) === 0 ? 'auto' : this.opts.element.outerWidth(false) + 'px');
-                    }
-
-                    return null;
-                } else if ($.isFunction(this.opts.width)) {
-                    return this.opts.width();
-                } else {
-                    return this.opts.width;
-               }
-            };
-
-            var width = resolveContainerWidth.call(this);
-            if (width !== null) {
-                this.container.css("width", width);
-            }
-        }
-    });
-
-    SingleSelect2 = clazz(AbstractSelect2, {
-
-        // single
-
-        createContainer: function () {
-            var container = $(document.createElement("div")).attr({
-                "class": "select2-container"
-            }).html([
-                "<a href='javascript:void(0)' class='select2-choice' tabindex='-1'>",
-                "   <span class='select2-chosen'>&#160;</span><abbr class='select2-search-choice-close'></abbr>",
-                "   <span class='select2-arrow' role='presentation'><b role='presentation'></b></span>",
-                "</a>",
-                "<label for='' class='select2-offscreen'></label>",
-                "<input class='select2-focusser select2-offscreen' type='text' aria-haspopup='true' role='button' />",
-                "<div class='select2-drop select2-display-none'>",
-                "   <div class='select2-search'>",
-                "       <label for='' class='select2-offscreen'></label>",
-                "       <input type='text' autocomplete='off' autocorrect='off' autocapitalize='off' spellcheck='false' class='select2-input' role='combobox' aria-expanded='true'",
-                "       aria-autocomplete='list' />",
-                "   </div>",
-                "   <ul class='select2-results' role='listbox'>",
-                "   </ul>",
-                "</div>"].join(""));
-            return container;
-        },
-
-        // single
-        enableInterface: function() {
-            if (this.parent.enableInterface.apply(this, arguments)) {
-                this.focusser.prop("disabled", !this.isInterfaceEnabled());
-            }
-        },
-
-        // single
-        opening: function () {
-            var el, range, len;
-
-            if (this.opts.minimumResultsForSearch >= 0) {
-                this.showSearch(true);
-            }
-
-            this.parent.opening.apply(this, arguments);
-
-            if (this.showSearchInput !== false) {
-                // IE appends focusser.val() at the end of field :/ so we manually insert it at the beginning using a range
-                // all other browsers handle this just fine
-
-                this.search.val(this.focusser.val());
-            }
-            if (this.opts.shouldFocusInput(this)) {
-                this.search.focus();
-                // move the cursor to the end after focussing, otherwise it will be at the beginning and
-                // new text will appear *before* focusser.val()
-                el = this.search.get(0);
-                if (el.createTextRange) {
-                    range = el.createTextRange();
-                    range.collapse(false);
-                    range.select();
-                } else if (el.setSelectionRange) {
-                    len = this.search.val().length;
-                    el.setSelectionRange(len, len);
-                }
-            }
-
-            // initializes search's value with nextSearchTerm (if defined by user)
-            // ignore nextSearchTerm if the dropdown is opened by the user pressing a letter
-            if(this.search.val() === "") {
-                if(this.nextSearchTerm != undefined){
-                    this.search.val(this.nextSearchTerm);
-                    this.search.select();
-                }
-            }
-
-            this.focusser.prop("disabled", true).val("");
-            this.updateResults(true);
-            this.opts.element.trigger($.Event("select2-open"));
-        },
-
-        // single
-        close: function () {
-            if (!this.opened()) return;
-            this.parent.close.apply(this, arguments);
-
-            this.focusser.prop("disabled", false);
-
-            if (this.opts.shouldFocusInput(this)) {
-                this.focusser.focus();
-            }
-        },
-
-        // single
-        focus: function () {
-            if (this.opened()) {
-                this.close();
-            } else {
-                this.focusser.prop("disabled", false);
-                if (this.opts.shouldFocusInput(this)) {
-                    this.focusser.focus();
-                }
-            }
-        },
-
-        // single
-        isFocused: function () {
-            return this.container.hasClass("select2-container-active");
-        },
-
-        // single
-        cancel: function () {
-            this.parent.cancel.apply(this, arguments);
-            this.focusser.prop("disabled", false);
-
-            if (this.opts.shouldFocusInput(this)) {
-                this.focusser.focus();
-            }
-        },
-
-        // single
-        destroy: function() {
-            $("label[for='" + this.focusser.attr('id') + "']")
-                .attr('for', this.opts.element.attr("id"));
-            this.parent.destroy.apply(this, arguments);
-
-            cleanupJQueryElements.call(this,
-                "selection",
-                "focusser"
-            );
-        },
-
-        // single
-        initContainer: function () {
-
-            var selection,
-                container = this.container,
-                dropdown = this.dropdown,
-                idSuffix = nextUid(),
-                elementLabel;
-
-            if (this.opts.minimumResultsForSearch < 0) {
-                this.showSearch(false);
-            } else {
-                this.showSearch(true);
-            }
-
-            this.selection = selection = container.find(".select2-choice");
-
-            this.focusser = container.find(".select2-focusser");
-
-            // add aria associations
-            selection.find(".select2-chosen").attr("id", "select2-chosen-"+idSuffix);
-            this.focusser.attr("aria-labelledby", "select2-chosen-"+idSuffix);
-            this.results.attr("id", "select2-results-"+idSuffix);
-            this.search.attr("aria-owns", "select2-results-"+idSuffix);
-
-            // rewrite labels from original element to focusser
-            this.focusser.attr("id", "s2id_autogen"+idSuffix);
-
-            elementLabel = $("label[for='" + this.opts.element.attr("id") + "']");
-
-            this.focusser.prev()
-                .text(elementLabel.text())
-                .attr('for', this.focusser.attr('id'));
-
-            // Ensure the original element retains an accessible name
-            var originalTitle = this.opts.element.attr("title");
-            this.opts.element.attr("title", (originalTitle || elementLabel.text()));
-
-            this.focusser.attr("tabindex", this.elementTabIndex);
-
-            // write label for search field using the label from the focusser element
-            this.search.attr("id", this.focusser.attr('id') + '_search');
-
-            this.search.prev()
-                .text($("label[for='" + this.focusser.attr('id') + "']").text())
-                .attr('for', this.search.attr('id'));
-
-            this.search.on("keydown", this.bind(function (e) {
-                if (!this.isInterfaceEnabled()) return;
-
-                if (e.which === KEY.PAGE_UP || e.which === KEY.PAGE_DOWN) {
-                    // prevent the page from scrolling
-                    killEvent(e);
-                    return;
-                }
-
-                switch (e.which) {
-                    case KEY.UP:
-                    case KEY.DOWN:
-                        this.moveHighlight((e.which === KEY.UP) ? -1 : 1);
-                        killEvent(e);
-                        return;
-                    case KEY.ENTER:
-                        this.selectHighlighted();
-                        killEvent(e);
-                        return;
-                    case KEY.TAB:
-                        this.selectHighlighted({noFocus: true});
-                        return;
-                    case KEY.ESC:
-                        this.cancel(e);
-                        killEvent(e);
-                        return;
-                }
-            }));
-
-            this.search.on("blur", this.bind(function(e) {
-                // a workaround for chrome to keep the search field focussed when the scroll bar is used to scroll the dropdown.
-                // without this the search field loses focus which is annoying
-                if (document.activeElement === this.body.get(0)) {
-                    window.setTimeout(this.bind(function() {
-                        if (this.opened()) {
-                            this.search.focus();
-                        }
-                    }), 0);
-                }
-            }));
-
-            this.focusser.on("keydown", this.bind(function (e) {
-                if (!this.isInterfaceEnabled()) return;
-
-                if (e.which === KEY.TAB || KEY.isControl(e) || KEY.isFunctionKey(e) || e.which === KEY.ESC) {
-                    return;
-                }
-
-                if (this.opts.openOnEnter === false && e.which === KEY.ENTER) {
-                    killEvent(e);
-                    return;
-                }
-
-                if (e.which == KEY.DOWN || e.which == KEY.UP
-                    || (e.which == KEY.ENTER && this.opts.openOnEnter)) {
-
-                    if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) return;
-
-                    this.open();
-                    killEvent(e);
-                    return;
-                }
-
-                if (e.which == KEY.DELETE || e.which == KEY.BACKSPACE) {
-                    if (this.opts.allowClear) {
-                        this.clear();
-                    }
-                    killEvent(e);
-                    return;
-                }
-            }));
-
-
-            installKeyUpChangeEvent(this.focusser);
-            this.focusser.on("keyup-change input", this.bind(function(e) {
-                if (this.opts.minimumResultsForSearch >= 0) {
-                    e.stopPropagation();
-                    if (this.opened()) return;
-                    this.open();
-                }
-            }));
-
-            selection.on("mousedown touchstart", "abbr", this.bind(function (e) {
-                if (!this.isInterfaceEnabled()) return;
-                this.clear();
-                killEventImmediately(e);
-                this.close();
-                this.selection.focus();
-            }));
-
-            selection.on("mousedown touchstart", this.bind(function (e) {
-                // Prevent IE from generating a click event on the body
-                reinsertElement(selection);
-
-                if (!this.container.hasClass("select2-container-active")) {
-                    this.opts.element.trigger($.Event("select2-focus"));
-                }
-
-                if (this.opened()) {
-                    this.close();
-                } else if (this.isInterfaceEnabled()) {
-                    this.open();
-                }
-
-                killEvent(e);
-            }));
-
-            dropdown.on("mousedown touchstart", this.bind(function() {
-                if (this.opts.shouldFocusInput(this)) {
-                    this.search.focus();
-                }
-            }));
-
-            selection.on("focus", this.bind(function(e) {
-                killEvent(e);
-            }));
-
-            this.focusser.on("focus", this.bind(function(){
-                if (!this.container.hasClass("select2-container-active")) {
-                    this.opts.element.trigger($.Event("select2-focus"));
-                }
-                this.container.addClass("select2-container-active");
-            })).on("blur", this.bind(function() {
-                if (!this.opened()) {
-                    this.container.removeClass("select2-container-active");
-                    this.opts.element.trigger($.Event("select2-blur"));
-                }
-            }));
-            this.search.on("focus", this.bind(function(){
-                if (!this.container.hasClass("select2-container-active")) {
-                    this.opts.element.trigger($.Event("select2-focus"));
-                }
-                this.container.addClass("select2-container-active");
-            }));
-
-            this.initContainerWidth();
-            this.opts.element.addClass("select2-offscreen");
-            this.setPlaceholder();
-
-        },
-
-        // single
-        clear: function(triggerChange) {
-            var data=this.selection.data("select2-data");
-            if (data) { // guard against queued quick consecutive clicks
-                var evt = $.Event("select2-clearing");
-                this.opts.element.trigger(evt);
-                if (evt.isDefaultPrevented()) {
-                    return;
-                }
-                var placeholderOption = this.getPlaceholderOption();
-                this.opts.element.val(placeholderOption ? placeholderOption.val() : "");
-                this.selection.find(".select2-chosen").empty();
-                this.selection.removeData("select2-data");
-                this.setPlaceholder();
-
-                if (triggerChange !== false){
-                    this.opts.element.trigger({ type: "select2-removed", val: this.id(data), choice: data });
-                    this.triggerChange({removed:data});
-                }
-            }
-        },
-
-        /**
-         * Sets selection based on source element's value
-         */
-        // single
-        initSelection: function () {
-            var selected;
-            if (this.isPlaceholderOptionSelected()) {
-                this.updateSelection(null);
-                this.close();
-                this.setPlaceholder();
-            } else {
-                var self = this;
-                this.opts.initSelection.call(null, this.opts.element, function(selected){
-                    if (selected !== undefined && selected !== null) {
-                        self.updateSelection(selected);
-                        self.close();
-                        self.setPlaceholder();
-                        self.nextSearchTerm = self.opts.nextSearchTerm(selected, self.search.val());
-                    }
-                });
-            }
-        },
-
-        isPlaceholderOptionSelected: function() {
-            var placeholderOption;
-            if (this.getPlaceholder() === undefined) return false; // no placeholder specified so no option should be considered
-            return ((placeholderOption = this.getPlaceholderOption()) !== undefined && placeholderOption.prop("selected"))
-                || (this.opts.element.val() === "")
-                || (this.opts.element.val() === undefined)
-                || (this.opts.element.val() === null);
-        },
-
-        // single
-        prepareOpts: function () {
-            var opts = this.parent.prepareOpts.apply(this, arguments),
-                self=this;
-
-            if (opts.element.get(0).tagName.toLowerCase() === "select") {
-                // install the selection initializer
-                opts.initSelection = function (element, callback) {
-                    var selected = element.find("option").filter(function() { return this.selected && !this.disabled });
-                    // a single select box always has a value, no need to null check 'selected'
-                    callback(self.optionToData(selected));
-                };
-            } else if ("data" in opts) {
-                // install default initSelection when applied to hidden input and data is local
-                opts.initSelection = opts.initSelection || function (element, callback) {
-                    var id = element.val();
-                    //search in data by id, storing the actual matching item
-                    var match = null;
-                    opts.query({
-                        matcher: function(term, text, el){
-                            var is_match = equal(id, opts.id(el));
-                            if (is_match) {
-                                match = el;
-                            }
-                            return is_match;
-                        },
-                        callback: !$.isFunction(callback) ? $.noop : function() {
-                            callback(match);
-                        }
-                    });
-                };
-            }
-
-            return opts;
-        },
-
-        // single
-        getPlaceholder: function() {
-            // if a placeholder is specified on a single select without a valid placeholder option ignore it
-            if (this.select) {
-                if (this.getPlaceholderOption() === undefined) {
-                    return undefined;
-                }
-            }
-
-            return this.parent.getPlaceholder.apply(this, arguments);
-        },
-
-        // single
-        setPlaceholder: function () {
-            var placeholder = this.getPlaceholder();
-
-            if (this.isPlaceholderOptionSelected() && placeholder !== undefined) {
-
-                // check for a placeholder option if attached to a select
-                if (this.select && this.getPlaceholderOption() === undefined) return;
-
-                this.selection.find(".select2-chosen").html(this.opts.escapeMarkup(placeholder));
-
-                this.selection.addClass("select2-default");
-
-                this.container.removeClass("select2-allowclear");
-            }
-        },
-
-        // single
-        postprocessResults: function (data, initial, noHighlightUpdate) {
-            var selected = 0, self = this, showSearchInput = true;
-
-            // find the selected element in the result list
-
-            this.findHighlightableChoices().each2(function (i, elm) {
-                if (equal(self.id(elm.data("select2-data")), self.opts.element.val())) {
-                    selected = i;
-                    return false;
-                }
-            });
-
-            // and highlight it
-            if (noHighlightUpdate !== false) {
-                if (initial === true && selected >= 0) {
-                    this.highlight(selected);
-                } else {
-                    this.highlight(0);
-                }
-            }
-
-            // hide the search box if this is the first we got the results and there are enough of them for search
-
-            if (initial === true) {
-                var min = this.opts.minimumResultsForSearch;
-                if (min >= 0) {
-                    this.showSearch(countResults(data.results) >= min);
-                }
-            }
-        },
-
-        // single
-        showSearch: function(showSearchInput) {
-            if (this.showSearchInput === showSearchInput) return;
-
-            this.showSearchInput = showSearchInput;
-
-            this.dropdown.find(".select2-search").toggleClass("select2-search-hidden", !showSearchInput);
-            this.dropdown.find(".select2-search").toggleClass("select2-offscreen", !showSearchInput);
-            //add "select2-with-searchbox" to the container if search box is shown
-            $(this.dropdown, this.container).toggleClass("select2-with-searchbox", showSearchInput);
-        },
-
-        // single
-        onSelect: function (data, options) {
-
-            if (!this.triggerSelect(data)) { return; }
-
-            var old = this.opts.element.val(),
-                oldData = this.data();
-
-            this.opts.element.val(this.id(data));
-            this.updateSelection(data);
-
-            this.opts.element.trigger({ type: "select2-selected", val: this.id(data), choice: data });
-
-            this.nextSearchTerm = this.opts.nextSearchTerm(data, this.search.val());
-            this.close();
-
-            if ((!options || !options.noFocus) && this.opts.shouldFocusInput(this)) {
-                this.focusser.focus();
-            }
-
-            if (!equal(old, this.id(data))) {
-                this.triggerChange({ added: data, removed: oldData });
-            }
-        },
-
-        // single
-        updateSelection: function (data) {
-
-            var container=this.selection.find(".select2-chosen"), formatted, cssClass;
-
-            this.selection.data("select2-data", data);
-
-            container.empty();
-            if (data !== null) {
-                formatted=this.opts.formatSelection(data, container, this.opts.escapeMarkup);
-            }
-            if (formatted !== undefined) {
-                container.append(formatted);
-            }
-            cssClass=this.opts.formatSelectionCssClass(data, container);
-            if (cssClass !== undefined) {
-                container.addClass(cssClass);
-            }
-
-            this.selection.removeClass("select2-default");
-
-            if (this.opts.allowClear && this.getPlaceholder() !== undefined) {
-                this.container.addClass("select2-allowclear");
-            }
-        },
-
-        // single
-        val: function () {
-            var val,
-                triggerChange = false,
-                data = null,
-                self = this,
-                oldData = this.data();
-
-            if (arguments.length === 0) {
-                return this.opts.element.val();
-            }
-
-            val = arguments[0];
-
-            if (arguments.length > 1) {
-                triggerChange = arguments[1];
-            }
-
-            if (this.select) {
-                this.select
-                    .val(val)
-                    .find("option").filter(function() { return this.selected }).each2(function (i, elm) {
-                        data = self.optionToData(elm);
-                        return false;
-                    });
-                this.updateSelection(data);
-                this.setPlaceholder();
-                if (triggerChange) {
-                    this.triggerChange({added: data, removed:oldData});
-                }
-            } else {
-                // val is an id. !val is true for [undefined,null,'',0] - 0 is legal
-                if (!val && val !== 0) {
-                    this.clear(triggerChange);
-                    return;
-                }
-                if (this.opts.initSelection === undefined) {
-                    throw new Error("cannot call val() if initSelection() is not defined");
-                }
-                this.opts.element.val(val);
-                this.opts.initSelection(this.opts.element, function(data){
-                    self.opts.element.val(!data ? "" : self.id(data));
-                    self.updateSelection(data);
-                    self.setPlaceholder();
-                    if (triggerChange) {
-                        self.triggerChange({added: data, removed:oldData});
-                    }
-                });
-            }
-        },
-
-        // single
-        clearSearch: function () {
-            this.search.val("");
-            this.focusser.val("");
-        },
-
-        // single
-        data: function(value) {
-            var data,
-                triggerChange = false;
-
-            if (arguments.length === 0) {
-                data = this.selection.data("select2-data");
-                if (data == undefined) data = null;
-                return data;
-            } else {
-                if (arguments.length > 1) {
-                    triggerChange = arguments[1];
-                }
-                if (!value) {
-                    this.clear(triggerChange);
-                } else {
-                    data = this.data();
-                    this.opts.element.val(!value ? "" : this.id(value));
-                    this.updateSelection(value);
-                    if (triggerChange) {
-                        this.triggerChange({added: value, removed:data});
-                    }
-                }
-            }
-        }
-    });
-
-    MultiSelect2 = clazz(AbstractSelect2, {
-
-        // multi
-        createContainer: function () {
-            var container = $(document.createElement("div")).attr({
-                "class": "select2-container select2-container-multi"
-            }).html([
-                "<ul class='select2-choices'>",
-                "  <li class='select2-search-field'>",
-                "    <label for='' class='select2-offscreen'></label>",
-                "    <input type='text' autocomplete='off' autocorrect='off' autocapitalize='off' spellcheck='false' class='select2-input'>",
-                "  </li>",
-                "</ul>",
-                "<div class='select2-drop select2-drop-multi select2-display-none'>",
-                "   <ul class='select2-results'>",
-                "   </ul>",
-                "</div>"].join(""));
-            return container;
-        },
-
-        // multi
-        prepareOpts: function () {
-            var opts = this.parent.prepareOpts.apply(this, arguments),
-                self=this;
-
-            // TODO validate placeholder is a string if specified
-
-            if (opts.element.get(0).tagName.toLowerCase() === "select") {
-                // install the selection initializer
-                opts.initSelection = function (element, callback) {
-
-                    var data = [];
-
-                    element.find("option").filter(function() { return this.selected && !this.disabled }).each2(function (i, elm) {
-                        data.push(self.optionToData(elm));
-                    });
-                    callback(data);
-                };
-            } else if ("data" in opts) {
-                // install default initSelection when applied to hidden input and data is local
-                opts.initSelection = opts.initSelection || function (element, callback) {
-                    var ids = splitVal(element.val(), opts.separator);
-                    //search in data by array of ids, storing matching items in a list
-                    var matches = [];
-                    opts.query({
-                        matcher: function(term, text, el){
-                            var is_match = $.grep(ids, function(id) {
-                                return equal(id, opts.id(el));
-                            }).length;
-                            if (is_match) {
-                                matches.push(el);
-                            }
-                            return is_match;
-                        },
-                        callback: !$.isFunction(callback) ? $.noop : function() {
-                            // reorder matches based on the order they appear in the ids array because right now
-                            // they are in the order in which they appear in data array
-                            var ordered = [];
-                            for (var i = 0; i < ids.length; i++) {
-                                var id = ids[i];
-                                for (var j = 0; j < matches.length; j++) {
-                                    var match = matches[j];
-                                    if (equal(id, opts.id(match))) {
-                                        ordered.push(match);
-                                        matches.splice(j, 1);
-                                        break;
-                                    }
-                                }
-                            }
-                            callback(ordered);
-                        }
-                    });
-                };
-            }
-
-            return opts;
-        },
-
-        // multi
-        selectChoice: function (choice) {
-
-            var selected = this.container.find(".select2-search-choice-focus");
-            if (selected.length && choice && choice[0] == selected[0]) {
-
-            } else {
-                if (selected.length) {
-                    this.opts.element.trigger("choice-deselected", selected);
-                }
-                selected.removeClass("select2-search-choice-focus");
-                if (choice && choice.length) {
-                    this.close();
-                    choice.addClass("select2-search-choice-focus");
-                    this.opts.element.trigger("choice-selected", choice);
-                }
-            }
-        },
-
-        // multi
-        destroy: function() {
-            $("label[for='" + this.search.attr('id') + "']")
-                .attr('for', this.opts.element.attr("id"));
-            this.parent.destroy.apply(this, arguments);
-
-            cleanupJQueryElements.call(this,
-                "searchContainer",
-                "selection"
-            );
-        },
-
-        // multi
-        initContainer: function () {
-
-            var selector = ".select2-choices", selection;
-
-            this.searchContainer = this.container.find(".select2-search-field");
-            this.selection = selection = this.container.find(selector);
-
-            var _this = this;
-            this.selection.on("click", ".select2-search-choice:not(.select2-locked)", function (e) {
-                //killEvent(e);
-                _this.search[0].focus();
-                _this.selectChoice($(this));
-            });
-
-            // rewrite labels from original element to focusser
-            this.search.attr("id", "s2id_autogen"+nextUid());
-
-            this.search.prev()
-                .text($("label[for='" + this.opts.element.attr("id") + "']").text())
-                .attr('for', this.search.attr('id'));
-
-            this.search.on("input paste", this.bind(function() {
-                if (this.search.attr('placeholder') && this.search.val().length == 0) return;
-                if (!this.isInterfaceEnabled()) return;
-                if (!this.opened()) {
-                    this.open();
-                }
-            }));
-
-            this.search.attr("tabindex", this.elementTabIndex);
-
-            this.keydowns = 0;
-            this.search.on("keydown", this.bind(function (e) {
-                if (!this.isInterfaceEnabled()) return;
-
-                ++this.keydowns;
-                var selected = selection.find(".select2-search-choice-focus");
-                var prev = selected.prev(".select2-search-choice:not(.select2-locked)");
-                var next = selected.next(".select2-search-choice:not(.select2-locked)");
-                var pos = getCursorInfo(this.search);
-
-                if (selected.length &&
-                    (e.which == KEY.LEFT || e.which == KEY.RIGHT || e.which == KEY.BACKSPACE || e.which == KEY.DELETE || e.which == KEY.ENTER)) {
-                    var selectedChoice = selected;
-                    if (e.which == KEY.LEFT && prev.length) {
-                        selectedChoice = prev;
-                    }
-                    else if (e.which == KEY.RIGHT) {
-                        selectedChoice = next.length ? next : null;
-                    }
-                    else if (e.which === KEY.BACKSPACE) {
-                        if (this.unselect(selected.first())) {
-                            this.search.width(10);
-                            selectedChoice = prev.length ? prev : next;
-                        }
-                    } else if (e.which == KEY.DELETE) {
-                        if (this.unselect(selected.first())) {
-                            this.search.width(10);
-                            selectedChoice = next.length ? next : null;
-                        }
-                    } else if (e.which == KEY.ENTER) {
-                        selectedChoice = null;
-                    }
-
-                    this.selectChoice(selectedChoice);
-                    killEvent(e);
-                    if (!selectedChoice || !selectedChoice.length) {
-                        this.open();
-                    }
-                    return;
-                } else if (((e.which === KEY.BACKSPACE && this.keydowns == 1)
-                    || e.which == KEY.LEFT) && (pos.offset == 0 && !pos.length)) {
-
-                    this.selectChoice(selection.find(".select2-search-choice:not(.select2-locked)").last());
-                    killEvent(e);
-                    return;
-                } else {
-                    this.selectChoice(null);
-                }
-
-                if (this.opened()) {
-                    switch (e.which) {
-                    case KEY.UP:
-                    case KEY.DOWN:
-                        this.moveHighlight((e.which === KEY.UP) ? -1 : 1);
-                        killEvent(e);
-                        return;
-                    case KEY.ENTER:
-                        this.selectHighlighted();
-                        killEvent(e);
-                        return;
-                    case KEY.TAB:
-                        this.selectHighlighted({noFocus:true});
-                        this.close();
-                        return;
-                    case KEY.ESC:
-                        this.cancel(e);
-                        killEvent(e);
-                        return;
-                    }
-                }
-
-                if (e.which === KEY.TAB || KEY.isControl(e) || KEY.isFunctionKey(e)
-                 || e.which === KEY.BACKSPACE || e.which === KEY.ESC) {
-                    return;
-                }
-
-                if (e.which === KEY.ENTER) {
-                    if (this.opts.openOnEnter === false) {
-                        return;
-                    } else if (e.altKey || e.ctrlKey || e.shiftKey || e.metaKey) {
-                        return;
-                    }
-                }
-
-                this.open();
-
-                if (e.which === KEY.PAGE_UP || e.which === KEY.PAGE_DOWN) {
-                    // prevent the page from scrolling
-                    killEvent(e);
-                }
-
-                if (e.which === KEY.ENTER) {
-                    // prevent form from being submitted
-                    killEvent(e);
-                }
-
-            }));
-
-            this.search.on("keyup", this.bind(function (e) {
-                this.keydowns = 0;
-                this.resizeSearch();
-            })
-            );
-
-            this.search.on("blur", this.bind(function(e) {
-                this.container.removeClass("select2-container-active");
-                this.search.removeClass("select2-focused");
-                this.selectChoice(null);
-                if (!this.opened()) this.clearSearch();
-                e.stopImmediatePropagation();
-                this.opts.element.trigger($.Event("select2-blur"));
-            }));
-
-            this.container.on("click", selector, this.bind(function (e) {
-                if (!this.isInterfaceEnabled()) return;
-                if ($(e.target).closest(".select2-search-choice").length > 0) {
-                    // clicked inside a select2 search choice, do not open
-                    return;
-                }
-                this.selectChoice(null);
-                this.clearPlaceholder();
-                if (!this.container.hasClass("select2-container-active")) {
-                    this.opts.element.trigger($.Event("select2-focus"));
-                }
-                this.open();
-                this.focusSearch();
-                e.preventDefault();
-            }));
-
-            this.container.on("focus", selector, this.bind(function () {
-                if (!this.isInterfaceEnabled()) return;
-                if (!this.container.hasClass("select2-container-active")) {
-                    this.opts.element.trigger($.Event("select2-focus"));
-                }
-                this.container.addClass("select2-container-active");
-                this.dropdown.addClass("select2-drop-active");
-                this.clearPlaceholder();
-            }));
-
-            this.initContainerWidth();
-            this.opts.element.addClass("select2-offscreen");
-
-            // set the placeholder if necessary
-            this.clearSearch();
-        },
-
-        // multi
-        enableInterface: function() {
-            if (this.parent.enableInterface.apply(this, arguments)) {
-                this.search.prop("disabled", !this.isInterfaceEnabled());
-            }
-        },
-
-        // multi
-        initSelection: function () {
-            var data;
-            if (this.opts.element.val() === "" && this.opts.element.text() === "") {
-                this.updateSelection([]);
-                this.close();
-                // set the placeholder if necessary
-                this.clearSearch();
-            }
-            if (this.select || this.opts.element.val() !== "") {
-                var self = this;
-                this.opts.initSelection.call(null, this.opts.element, function(data){
-                    if (data !== undefined && data !== null) {
-                        self.updateSelection(data);
-                        self.close();
-                        // set the placeholder if necessary
-                        self.clearSearch();
-                    }
-                });
-            }
-        },
-
-        // multi
-        clearSearch: function () {
-            var placeholder = this.getPlaceholder(),
-                maxWidth = this.getMaxSearchWidth();
-
-            if (placeholder !== undefined  && this.getVal().length === 0 && this.search.hasClass("select2-focused") === false) {
-                this.search.val(placeholder).addClass("select2-default");
-                // stretch the search box to full width of the container so as much of the placeholder is visible as possible
-                // we could call this.resizeSearch(), but we do not because that requires a sizer and we do not want to create one so early because of a firefox bug, see #944
-                this.search.width(maxWidth > 0 ? maxWidth : this.container.css("width"));
-            } else {
-                this.search.val("").width(10);
-            }
-        },
-
-        // multi
-        clearPlaceholder: function () {
-            if (this.search.hasClass("select2-default")) {
-                this.search.val("").removeClass("select2-default");
-            }
-        },
-
-        // multi
-        opening: function () {
-            this.clearPlaceholder(); // should be done before super so placeholder is not used to search
-            this.resizeSearch();
-
-            this.parent.opening.apply(this, arguments);
-
-            this.focusSearch();
-
-            // initializes search's value with nextSearchTerm (if defined by user)
-            // ignore nextSearchTerm if the dropdown is opened by the user pressing a letter
-            if(this.search.val() === "") {
-                if(this.nextSearchTerm != undefined){
-                    this.search.val(this.nextSearchTerm);
-                    this.search.select();
-                }
-            }
-
-            this.updateResults(true);
-            if (this.opts.shouldFocusInput(this)) {
-                this.search.focus();
-            }
-            this.opts.element.trigger($.Event("select2-open"));
-        },
-
-        // multi
-        close: function () {
-            if (!this.opened()) return;
-            this.parent.close.apply(this, arguments);
-        },
-
-        // multi
-        focus: function () {
-            this.close();
-            this.search.focus();
-        },
-
-        // multi
-        isFocused: function () {
-            return this.search.hasClass("select2-focused");
-        },
-
-        // multi
-        updateSelection: function (data) {
-            var ids = [], filtered = [], self = this;
-
-            // filter out duplicates
-            $(data).each(function () {
-                if (indexOf(self.id(this), ids) < 0) {
-                    ids.push(self.id(this));
-                    filtered.push(this);
-                }
-            });
-            data = filtered;
-
-            this.selection.find(".select2-search-choice").remove();
-            $(data).each(function () {
-                self.addSelectedChoice(this);
-            });
-            self.postprocessResults();
-        },
-
-        // multi
-        tokenize: function() {
-            var input = this.search.val();
-            input = this.opts.tokenizer.call(this, input, this.data(), this.bind(this.onSelect), this.opts);
-            if (input != null && input != undefined) {
-                this.search.val(input);
-                if (input.length > 0) {
-                    this.open();
-                }
-            }
-
-        },
-
-        // multi
-        onSelect: function (data, options) {
-
-            if (!this.triggerSelect(data)) { return; }
-
-            this.addSelectedChoice(data);
-
-            this.opts.element.trigger({ type: "selected", val: this.id(data), choice: data });
-
-            // keep track of the search's value before it gets cleared
-            this.nextSearchTerm = this.opts.nextSearchTerm(data, this.search.val());
-
-            this.clearSearch();
-            this.updateResults();
-
-            if (this.select || !this.opts.closeOnSelect) this.postprocessResults(data, false, this.opts.closeOnSelect===true);
-
-            if (this.opts.closeOnSelect) {
-                this.close();
-                this.search.width(10);
-            } else {
-                if (this.countSelectableResults()>0) {
-                    this.search.width(10);
-                    this.resizeSearch();
-                    if (this.getMaximumSelectionSize() > 0 && this.val().length >= this.getMaximumSelectionSize()) {
-                        // if we reached max selection size repaint the results so choices
-                        // are replaced with the max selection reached message
-                        this.updateResults(true);
-                    } else {
-                        // initializes search's value with nextSearchTerm and update search result
-                        if(this.nextSearchTerm != undefined){
-                            this.search.val(this.nextSearchTerm);
-                            this.updateResults();
-                            this.search.select();
-                        }
-                    }
-                    this.positionDropdown();
-                } else {
-                    // if nothing left to select close
-                    this.close();
-                    this.search.width(10);
-                }
-            }
-
-            // since its not possible to select an element that has already been
-            // added we do not need to check if this is a new element before firing change
-            this.triggerChange({ added: data });
-
-            if (!options || !options.noFocus)
-                this.focusSearch();
-        },
-
-        // multi
-        cancel: function () {
-            this.close();
-            this.focusSearch();
-        },
-
-        addSelectedChoice: function (data) {
-            var enableChoice = !data.locked,
-                enabledItem = $(
-                    "<li class='select2-search-choice'>" +
-                    "    <div></div>" +
-                    "    <a href='#' class='select2-search-choice-close' tabindex='-1'></a>" +
-                    "</li>"),
-                disabledItem = $(
-                    "<li class='select2-search-choice select2-locked'>" +
-                    "<div></div>" +
-                    "</li>");
-            var choice = enableChoice ? enabledItem : disabledItem,
-                id = this.id(data),
-                val = this.getVal(),
-                formatted,
-                cssClass;
-
-            formatted=this.opts.formatSelection(data, choice.find("div"), this.opts.escapeMarkup);
-            if (formatted != undefined) {
-                choice.find("div").replaceWith("<div>"+formatted+"</div>");
-            }
-            cssClass=this.opts.formatSelectionCssClass(data, choice.find("div"));
-            if (cssClass != undefined) {
-                choice.addClass(cssClass);
-            }
-
-            if(enableChoice){
-              choice.find(".select2-search-choice-close")
-                  .on("mousedown", killEvent)
-                  .on("click dblclick", this.bind(function (e) {
-                  if (!this.isInterfaceEnabled()) return;
-
-                  this.unselect($(e.target));
-                  this.selection.find(".select2-search-choice-focus").removeClass("select2-search-choice-focus");
-                  killEvent(e);
-                  this.close();
-                  this.focusSearch();
-              })).on("focus", this.bind(function () {
-                  if (!this.isInterfaceEnabled()) return;
-                  this.container.addClass("select2-container-active");
-                  this.dropdown.addClass("select2-drop-active");
-              }));
-            }
-
-            choice.data("select2-data", data);
-            choice.insertBefore(this.searchContainer);
-
-            val.push(id);
-            this.setVal(val);
-        },
-
-        // multi
-        unselect: function (selected) {
-            var val = this.getVal(),
-                data,
-                index;
-            selected = selected.closest(".select2-search-choice");
-
-            if (selected.length === 0) {
-                throw "Invalid argument: " + selected + ". Must be .select2-search-choice";
-            }
-
-            data = selected.data("select2-data");
-
-            if (!data) {
-                // prevent a race condition when the 'x' is clicked really fast repeatedly the event can be queued
-                // and invoked on an element already removed
-                return;
-            }
-
-            var evt = $.Event("select2-removing");
-            evt.val = this.id(data);
-            evt.choice = data;
-            this.opts.element.trigger(evt);
-
-            if (evt.isDefaultPrevented()) {
-                return false;
-            }
-
-            while((index = indexOf(this.id(data), val)) >= 0) {
-                val.splice(index, 1);
-                this.setVal(val);
-                if (this.select) this.postprocessResults();
-            }
-
-            selected.remove();
-
-            this.opts.element.trigger({ type: "select2-removed", val: this.id(data), choice: data });
-            this.triggerChange({ removed: data });
-
-            return true;
-        },
-
-        // multi
-        postprocessResults: function (data, initial, noHighlightUpdate) {
-            var val = this.getVal(),
-                choices = this.results.find(".select2-result"),
-                compound = this.results.find(".select2-result-with-children"),
-                self = this;
-
-            choices.each2(function (i, choice) {
-                var id = self.id(choice.data("select2-data"));
-                if (indexOf(id, val) >= 0) {
-                    choice.addClass("select2-selected");
-                    // mark all children of the selected parent as selected
-                    choice.find(".select2-result-selectable").addClass("select2-selected");
-                }
-            });
-
-            compound.each2(function(i, choice) {
-                // hide an optgroup if it doesn't have any selectable children
-                if (!choice.is('.select2-result-selectable')
-                    && choice.find(".select2-result-selectable:not(.select2-selected)").length === 0) {
-                    choice.addClass("select2-selected");
-                }
-            });
-
-            if (this.highlight() == -1 && noHighlightUpdate !== false){
-                self.highlight(0);
-            }
-
-            //If all results are chosen render formatNoMatches
-            if(!this.opts.createSearchChoice && !choices.filter('.select2-result:not(.select2-selected)').length > 0){
-                if(!data || data && !data.more && this.results.find(".select2-no-results").length === 0) {
-                    if (checkFormatter(self.opts.formatNoMatches, "formatNoMatches")) {
-                        this.results.append("<li class='select2-no-results'>" + evaluate(self.opts.formatNoMatches, self.opts.element, self.search.val()) + "</li>");
-                    }
-                }
-            }
-
-        },
-
-        // multi
-        getMaxSearchWidth: function() {
-            return this.selection.width() - getSideBorderPadding(this.search);
-        },
-
-        // multi
-        resizeSearch: function () {
-            var minimumWidth, left, maxWidth, containerLeft, searchWidth,
-                sideBorderPadding = getSideBorderPadding(this.search);
-
-            minimumWidth = measureTextWidth(this.search) + 10;
-
-            left = this.search.offset().left;
-
-            maxWidth = this.selection.width();
-            containerLeft = this.selection.offset().left;
-
-            searchWidth = maxWidth - (left - containerLeft) - sideBorderPadding;
-
-            if (searchWidth < minimumWidth) {
-                searchWidth = maxWidth - sideBorderPadding;
-            }
-
-            if (searchWidth < 40) {
-                searchWidth = maxWidth - sideBorderPadding;
-            }
-
-            if (searchWidth <= 0) {
-              searchWidth = minimumWidth;
-            }
-
-            this.search.width(Math.floor(searchWidth));
-        },
-
-        // multi
-        getVal: function () {
-            var val;
-            if (this.select) {
-                val = this.select.val();
-                return val === null ? [] : val;
-            } else {
-                val = this.opts.element.val();
-                return splitVal(val, this.opts.separator);
-            }
-        },
-
-        // multi
-        setVal: function (val) {
-            var unique;
-            if (this.select) {
-                this.select.val(val);
-            } else {
-                unique = [];
-                // filter out duplicates
-                $(val).each(function () {
-                    if (indexOf(this, unique) < 0) unique.push(this);
-                });
-                this.opts.element.val(unique.length === 0 ? "" : unique.join(this.opts.separator));
-            }
-        },
-
-        // multi
-        buildChangeDetails: function (old, current) {
-            var current = current.slice(0),
-                old = old.slice(0);
-
-            // remove intersection from each array
-            for (var i = 0; i < current.length; i++) {
-                for (var j = 0; j < old.length; j++) {
-                    if (equal(this.opts.id(current[i]), this.opts.id(old[j]))) {
-                        current.splice(i, 1);
-                        if(i>0){
-                        	i--;
-                        }
-                        old.splice(j, 1);
-                        j--;
-                    }
-                }
-            }
-
-            return {added: current, removed: old};
-        },
-
-
-        // multi
-        val: function (val, triggerChange) {
-            var oldData, self=this;
-
-            if (arguments.length === 0) {
-                return this.getVal();
-            }
-
-            oldData=this.data();
-            if (!oldData.length) oldData=[];
-
-            // val is an id. !val is true for [undefined,null,'',0] - 0 is legal
-            if (!val && val !== 0) {
-                this.opts.element.val("");
-                this.updateSelection([]);
-                this.clearSearch();
-                if (triggerChange) {
-                    this.triggerChange({added: this.data(), removed: oldData});
-                }
-                return;
-            }
-
-            // val is a list of ids
-            this.setVal(val);
-
-            if (this.select) {
-                this.opts.initSelection(this.select, this.bind(this.updateSelection));
-                if (triggerChange) {
-                    this.triggerChange(this.buildChangeDetails(oldData, this.data()));
-                }
-            } else {
-                if (this.opts.initSelection === undefined) {
-                    throw new Error("val() cannot be called if initSelection() is not defined");
-                }
-
-                this.opts.initSelection(this.opts.element, function(data){
-                    var ids=$.map(data, self.id);
-                    self.setVal(ids);
-                    self.updateSelection(data);
-                    self.clearSearch();
-                    if (triggerChange) {
-                        self.triggerChange(self.buildChangeDetails(oldData, self.data()));
-                    }
-                });
-            }
-            this.clearSearch();
-        },
-
-        // multi
-        onSortStart: function() {
-            if (this.select) {
-                throw new Error("Sorting of elements is not supported when attached to <select>. Attach to <input type='hidden'/> instead.");
-            }
-
-            // collapse search field into 0 width so its container can be collapsed as well
-            this.search.width(0);
-            // hide the container
-            this.searchContainer.hide();
-        },
-
-        // multi
-        onSortEnd:function() {
-
-            var val=[], self=this;
-
-            // show search and move it to the end of the list
-            this.searchContainer.show();
-            // make sure the search container is the last item in the list
-            this.searchContainer.appendTo(this.searchContainer.parent());
-            // since we collapsed the width in dragStarted, we resize it here
-            this.resizeSearch();
-
-            // update selection
-            this.selection.find(".select2-search-choice").each(function() {
-                val.push(self.opts.id($(this).data("select2-data")));
-            });
-            this.setVal(val);
-            this.triggerChange();
-        },
-
-        // multi
-        data: function(values, triggerChange) {
-            var self=this, ids, old;
-            if (arguments.length === 0) {
-                 return this.selection
-                     .children(".select2-search-choice")
-                     .map(function() { return $(this).data("select2-data"); })
-                     .get();
-            } else {
-                old = this.data();
-                if (!values) { values = []; }
-                ids = $.map(values, function(e) { return self.opts.id(e); });
-                this.setVal(ids);
-                this.updateSelection(values);
-                this.clearSearch();
-                if (triggerChange) {
-                    this.triggerChange(this.buildChangeDetails(old, this.data()));
-                }
-            }
-        }
-    });
-
-    $.fn.select2 = function () {
-
-        var args = Array.prototype.slice.call(arguments, 0),
-            opts,
-            select2,
-            method, value, multiple,
-            allowedMethods = ["val", "destroy", "opened", "open", "close", "focus", "isFocused", "container", "dropdown", "onSortStart", "onSortEnd", "enable", "disable", "readonly", "positionDropdown", "data", "search"],
-            valueMethods = ["opened", "isFocused", "container", "dropdown"],
-            propertyMethods = ["val", "data"],
-            methodsMap = { search: "externalSearch" };
-
-        this.each(function () {
-            if (args.length === 0 || typeof(args[0]) === "object") {
-                opts = args.length === 0 ? {} : $.extend({}, args[0]);
-                opts.element = $(this);
-
-                if (opts.element.get(0).tagName.toLowerCase() === "select") {
-                    multiple = opts.element.prop("multiple");
-                } else {
-                    multiple = opts.multiple || false;
-                    if ("tags" in opts) {opts.multiple = multiple = true;}
-                }
-
-                select2 = multiple ? new window.Select2["class"].multi() : new window.Select2["class"].single();
-                select2.init(opts);
-            } else if (typeof(args[0]) === "string") {
-
-                if (indexOf(args[0], allowedMethods) < 0) {
-                    throw "Unknown method: " + args[0];
-                }
-
-                value = undefined;
-                select2 = $(this).data("select2");
-                if (select2 === undefined) return;
-
-                method=args[0];
-
-                if (method === "container") {
-                    value = select2.container;
-                } else if (method === "dropdown") {
-                    value = select2.dropdown;
-                } else {
-                    if (methodsMap[method]) method = methodsMap[method];
-
-                    value = select2[method].apply(select2, args.slice(1));
-                }
-                if (indexOf(args[0], valueMethods) >= 0
-                    || (indexOf(args[0], propertyMethods) >= 0 && args.length == 1)) {
-                    return false; // abort the iteration, ready to return first matched value
-                }
-            } else {
-                throw "Invalid arguments to select2 plugin: " + args;
-            }
-        });
-        return (value === undefined) ? this : value;
-    };
-
-    // plugin defaults, accessible to users
-    $.fn.select2.defaults = {
-        width: "copy",
-        loadMorePadding: 0,
-        closeOnSelect: true,
-        openOnEnter: true,
-        containerCss: {},
-        dropdownCss: {},
-        containerCssClass: "",
-        dropdownCssClass: "",
-        formatResult: function(result, container, query, escapeMarkup) {
-            var markup=[];
-            markMatch(result.text, query.term, markup, escapeMarkup);
-            return markup.join("");
-        },
-        formatSelection: function (data, container, escapeMarkup) {
-            return data ? escapeMarkup(data.text) : undefined;
-        },
-        sortResults: function (results, container, query) {
-            return results;
-        },
-        formatResultCssClass: function(data) {return data.css;},
-        formatSelectionCssClass: function(data, container) {return undefined;},
-        formatMatches: function (matches) { return matches + " results are available, use up and down arrow keys to navigate."; },
-        formatNoMatches: function () { return "No matches found"; },
-        formatInputTooShort: function (input, min) { var n = min - input.length; return "Enter an address"; },
-        formatInputTooLong: function (input, max) { var n = input.length - max; return "Please delete " + n + " character" + (n == 1? "" : "s"); },
-        formatSelectionTooBig: function (limit) { return "You can only select " + limit + " item" + (limit == 1 ? "" : "s"); },
-        formatLoadMore: function (pageNumber) { return "Loading more results…"; },
-        formatSearching: function () { return "Searching…"; },
-        minimumResultsForSearch: 0,
-        minimumInputLength: 0,
-        maximumInputLength: null,
-        maximumSelectionSize: 0,
-        id: function (e) { return e == undefined ? null : e.id; },
-        matcher: function(term, text) {
-            return stripDiacritics(''+text).toUpperCase().indexOf(stripDiacritics(''+term).toUpperCase()) >= 0;
-        },
-        separator: ",",
-        tokenSeparators: [],
-        tokenizer: defaultTokenizer,
-        escapeMarkup: defaultEscapeMarkup,
-        blurOnChange: false,
-        selectOnBlur: false,
-        adaptContainerCssClass: function(c) { return c; },
-        adaptDropdownCssClass: function(c) { return null; },
-        nextSearchTerm: function(selectedObject, currentSearchTerm) { return undefined; },
-        searchInputPlaceholder: '',
-        createSearchChoicePosition: 'top',
-        shouldFocusInput: function (instance) {
-            // Attempt to detect touch devices
-            var supportsTouchEvents = (('ontouchstart' in window) ||
-                                       (navigator.msMaxTouchPoints > 0));
-
-            // Only devices which support touch events should be special cased
-            if (!supportsTouchEvents) {
-                return true;
-            }
-
-            // Never focus the input if search is disabled
-            if (instance.opts.minimumResultsForSearch < 0) {
-                return false;
-            }
-
-            return true;
-        }
-    };
-
-    $.fn.select2.ajaxDefaults = {
-        transport: $.ajax,
-        params: {
-            type: "GET",
-            cache: false,
-            dataType: "json"
-        }
-    };
-
-    // exports
-    window.Select2 = {
-        query: {
-            ajax: ajax,
-            local: local,
-            tags: tags
-        }, util: {
-            debounce: debounce,
-            markMatch: markMatch,
-            escapeMarkup: defaultEscapeMarkup,
-            stripDiacritics: stripDiacritics
-        }, "class": {
-            "abstract": AbstractSelect2,
-            "single": SingleSelect2,
-            "multi": MultiSelect2
-        }
-    };
-
-}(jQuery));
-
-});
-require.register("kpwebb-select2/select2_locale_en.js", function(exports, require, module){
-/**
- * Select2 <Language> translation.
- * 
- * Author: Your Name <your@email>
- */
-(function ($) {
-    "use strict";
-
-    $.extend($.fn.select2.defaults, {
-        formatMatches: function (matches) { return matches + " results are available, use up and down arrow keys to navigate."; },
-        formatNoMatches: function () { return "No matches found"; },
-        formatInputTooShort: function (input, min) { var n = min - input.length; return "Enter an address" + (n == 1 ? "" : "s"); },
-        formatInputTooLong: function (input, max) { var n = input.length - max; return "" + (n == 1 ? "" : "s"); },
-        formatSelectionTooBig: function (limit) { return "You can only select " + limit + " item" + (limit == 1 ? "" : "s"); },
-        formatLoadMore: function (pageNumber) { return "Loading more results…"; },
-        formatSearching: function () { return "Searching…"; }
-    });
-})(jQuery);
-
-});
-require.register("leaflet/leaflet-src.js", function(exports, require, module){
-/*
- Leaflet, a JavaScript library for mobile-friendly interactive maps. http://leafletjs.com
- (c) 2010-2013, Vladimir Agafonkin
- (c) 2010-2011, CloudMade
-*/
-(function (window, document, undefined) {
-var oldL = window.L,
-    L = {};
-
-L.version = '0.7.3';
-
-// define Leaflet for Node module pattern loaders, including Browserify
-if (typeof module === 'object' && typeof module.exports === 'object') {
-	module.exports = L;
-
-// define Leaflet as an AMD module
-} else if (typeof define === 'function' && define.amd) {
-	define(L);
-}
-
-// define Leaflet as a global L variable, saving the original L to restore later if needed
-
-L.noConflict = function () {
-	window.L = oldL;
-	return this;
-};
-
-window.L = L;
-
-
-/*
- * L.Util contains various utility functions used throughout Leaflet code.
- */
-
-L.Util = {
-	extend: function (dest) { // (Object[, Object, ...]) ->
-		var sources = Array.prototype.slice.call(arguments, 1),
-		    i, j, len, src;
-
-		for (j = 0, len = sources.length; j < len; j++) {
-			src = sources[j] || {};
-			for (i in src) {
-				if (src.hasOwnProperty(i)) {
-					dest[i] = src[i];
-				}
-			}
-		}
-		return dest;
-	},
-
-	bind: function (fn, obj) { // (Function, Object) -> Function
-		var args = arguments.length > 2 ? Array.prototype.slice.call(arguments, 2) : null;
-		return function () {
-			return fn.apply(obj, args || arguments);
-		};
-	},
-
-	stamp: (function () {
-		var lastId = 0,
-		    key = '_leaflet_id';
-		return function (obj) {
-			obj[key] = obj[key] || ++lastId;
-			return obj[key];
-		};
-	}()),
-
-	invokeEach: function (obj, method, context) {
-		var i, args;
-
-		if (typeof obj === 'object') {
-			args = Array.prototype.slice.call(arguments, 3);
-
-			for (i in obj) {
-				method.apply(context, [i, obj[i]].concat(args));
-			}
-			return true;
-		}
-
-		return false;
-	},
-
-	limitExecByInterval: function (fn, time, context) {
-		var lock, execOnUnlock;
-
-		return function wrapperFn() {
-			var args = arguments;
-
-			if (lock) {
-				execOnUnlock = true;
-				return;
-			}
-
-			lock = true;
-
-			setTimeout(function () {
-				lock = false;
-
-				if (execOnUnlock) {
-					wrapperFn.apply(context, args);
-					execOnUnlock = false;
-				}
-			}, time);
-
-			fn.apply(context, args);
-		};
-	},
-
-	falseFn: function () {
-		return false;
-	},
-
-	formatNum: function (num, digits) {
-		var pow = Math.pow(10, digits || 5);
-		return Math.round(num * pow) / pow;
-	},
-
-	trim: function (str) {
-		return str.trim ? str.trim() : str.replace(/^\s+|\s+$/g, '');
-	},
-
-	splitWords: function (str) {
-		return L.Util.trim(str).split(/\s+/);
-	},
-
-	setOptions: function (obj, options) {
-		obj.options = L.extend({}, obj.options, options);
-		return obj.options;
-	},
-
-	getParamString: function (obj, existingUrl, uppercase) {
-		var params = [];
-		for (var i in obj) {
-			params.push(encodeURIComponent(uppercase ? i.toUpperCase() : i) + '=' + encodeURIComponent(obj[i]));
-		}
-		return ((!existingUrl || existingUrl.indexOf('?') === -1) ? '?' : '&') + params.join('&');
-	},
-	template: function (str, data) {
-		return str.replace(/\{ *([\w_]+) *\}/g, function (str, key) {
-			var value = data[key];
-			if (value === undefined) {
-				throw new Error('No value provided for variable ' + str);
-			} else if (typeof value === 'function') {
-				value = value(data);
-			}
-			return value;
-		});
-	},
-
-	isArray: Array.isArray || function (obj) {
-		return (Object.prototype.toString.call(obj) === '[object Array]');
-	},
-
-	emptyImageUrl: 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='
-};
-
-(function () {
-
-	// inspired by http://paulirish.com/2011/requestanimationframe-for-smart-animating/
-
-	function getPrefixed(name) {
-		var i, fn,
-		    prefixes = ['webkit', 'moz', 'o', 'ms'];
-
-		for (i = 0; i < prefixes.length && !fn; i++) {
-			fn = window[prefixes[i] + name];
-		}
-
-		return fn;
-	}
-
-	var lastTime = 0;
-
-	function timeoutDefer(fn) {
-		var time = +new Date(),
-		    timeToCall = Math.max(0, 16 - (time - lastTime));
-
-		lastTime = time + timeToCall;
-		return window.setTimeout(fn, timeToCall);
-	}
-
-	var requestFn = window.requestAnimationFrame ||
-	        getPrefixed('RequestAnimationFrame') || timeoutDefer;
-
-	var cancelFn = window.cancelAnimationFrame ||
-	        getPrefixed('CancelAnimationFrame') ||
-	        getPrefixed('CancelRequestAnimationFrame') ||
-	        function (id) { window.clearTimeout(id); };
-
-
-	L.Util.requestAnimFrame = function (fn, context, immediate, element) {
-		fn = L.bind(fn, context);
-
-		if (immediate && requestFn === timeoutDefer) {
-			fn();
-		} else {
-			return requestFn.call(window, fn, element);
-		}
-	};
-
-	L.Util.cancelAnimFrame = function (id) {
-		if (id) {
-			cancelFn.call(window, id);
-		}
-	};
-
-}());
-
-// shortcuts for most used utility functions
-L.extend = L.Util.extend;
-L.bind = L.Util.bind;
-L.stamp = L.Util.stamp;
-L.setOptions = L.Util.setOptions;
-
-
-/*
- * L.Class powers the OOP facilities of the library.
- * Thanks to John Resig and Dean Edwards for inspiration!
- */
-
-L.Class = function () {};
-
-L.Class.extend = function (props) {
-
-	// extended class with the new prototype
-	var NewClass = function () {
-
-		// call the constructor
-		if (this.initialize) {
-			this.initialize.apply(this, arguments);
-		}
-
-		// call all constructor hooks
-		if (this._initHooks) {
-			this.callInitHooks();
-		}
-	};
-
-	// instantiate class without calling constructor
-	var F = function () {};
-	F.prototype = this.prototype;
-
-	var proto = new F();
-	proto.constructor = NewClass;
-
-	NewClass.prototype = proto;
-
-	//inherit parent's statics
-	for (var i in this) {
-		if (this.hasOwnProperty(i) && i !== 'prototype') {
-			NewClass[i] = this[i];
-		}
-	}
-
-	// mix static properties into the class
-	if (props.statics) {
-		L.extend(NewClass, props.statics);
-		delete props.statics;
-	}
-
-	// mix includes into the prototype
-	if (props.includes) {
-		L.Util.extend.apply(null, [proto].concat(props.includes));
-		delete props.includes;
-	}
-
-	// merge options
-	if (props.options && proto.options) {
-		props.options = L.extend({}, proto.options, props.options);
-	}
-
-	// mix given properties into the prototype
-	L.extend(proto, props);
-
-	proto._initHooks = [];
-
-	var parent = this;
-	// jshint camelcase: false
-	NewClass.__super__ = parent.prototype;
-
-	// add method for calling all hooks
-	proto.callInitHooks = function () {
-
-		if (this._initHooksCalled) { return; }
-
-		if (parent.prototype.callInitHooks) {
-			parent.prototype.callInitHooks.call(this);
-		}
-
-		this._initHooksCalled = true;
-
-		for (var i = 0, len = proto._initHooks.length; i < len; i++) {
-			proto._initHooks[i].call(this);
-		}
-	};
-
-	return NewClass;
-};
-
-
-// method for adding properties to prototype
-L.Class.include = function (props) {
-	L.extend(this.prototype, props);
-};
-
-// merge new default options to the Class
-L.Class.mergeOptions = function (options) {
-	L.extend(this.prototype.options, options);
-};
-
-// add a constructor hook
-L.Class.addInitHook = function (fn) { // (Function) || (String, args...)
-	var args = Array.prototype.slice.call(arguments, 1);
-
-	var init = typeof fn === 'function' ? fn : function () {
-		this[fn].apply(this, args);
-	};
-
-	this.prototype._initHooks = this.prototype._initHooks || [];
-	this.prototype._initHooks.push(init);
-};
-
-
-/*
- * L.Mixin.Events is used to add custom events functionality to Leaflet classes.
- */
-
-var eventsKey = '_leaflet_events';
-
-L.Mixin = {};
-
-L.Mixin.Events = {
-
-	addEventListener: function (types, fn, context) { // (String, Function[, Object]) or (Object[, Object])
-
-		// types can be a map of types/handlers
-		if (L.Util.invokeEach(types, this.addEventListener, this, fn, context)) { return this; }
-
-		var events = this[eventsKey] = this[eventsKey] || {},
-		    contextId = context && context !== this && L.stamp(context),
-		    i, len, event, type, indexKey, indexLenKey, typeIndex;
-
-		// types can be a string of space-separated words
-		types = L.Util.splitWords(types);
-
-		for (i = 0, len = types.length; i < len; i++) {
-			event = {
-				action: fn,
-				context: context || this
-			};
-			type = types[i];
-
-			if (contextId) {
-				// store listeners of a particular context in a separate hash (if it has an id)
-				// gives a major performance boost when removing thousands of map layers
-
-				indexKey = type + '_idx';
-				indexLenKey = indexKey + '_len';
-
-				typeIndex = events[indexKey] = events[indexKey] || {};
-
-				if (!typeIndex[contextId]) {
-					typeIndex[contextId] = [];
-
-					// keep track of the number of keys in the index to quickly check if it's empty
-					events[indexLenKey] = (events[indexLenKey] || 0) + 1;
-				}
-
-				typeIndex[contextId].push(event);
-
-
-			} else {
-				events[type] = events[type] || [];
-				events[type].push(event);
-			}
-		}
-
-		return this;
-	},
-
-	hasEventListeners: function (type) { // (String) -> Boolean
-		var events = this[eventsKey];
-		return !!events && ((type in events && events[type].length > 0) ||
-		                    (type + '_idx' in events && events[type + '_idx_len'] > 0));
-	},
-
-	removeEventListener: function (types, fn, context) { // ([String, Function, Object]) or (Object[, Object])
-
-		if (!this[eventsKey]) {
-			return this;
-		}
-
-		if (!types) {
-			return this.clearAllEventListeners();
-		}
-
-		if (L.Util.invokeEach(types, this.removeEventListener, this, fn, context)) { return this; }
-
-		var events = this[eventsKey],
-		    contextId = context && context !== this && L.stamp(context),
-		    i, len, type, listeners, j, indexKey, indexLenKey, typeIndex, removed;
-
-		types = L.Util.splitWords(types);
-
-		for (i = 0, len = types.length; i < len; i++) {
-			type = types[i];
-			indexKey = type + '_idx';
-			indexLenKey = indexKey + '_len';
-
-			typeIndex = events[indexKey];
-
-			if (!fn) {
-				// clear all listeners for a type if function isn't specified
-				delete events[type];
-				delete events[indexKey];
-				delete events[indexLenKey];
-
-			} else {
-				listeners = contextId && typeIndex ? typeIndex[contextId] : events[type];
-
-				if (listeners) {
-					for (j = listeners.length - 1; j >= 0; j--) {
-						if ((listeners[j].action === fn) && (!context || (listeners[j].context === context))) {
-							removed = listeners.splice(j, 1);
-							// set the old action to a no-op, because it is possible
-							// that the listener is being iterated over as part of a dispatch
-							removed[0].action = L.Util.falseFn;
-						}
-					}
-
-					if (context && typeIndex && (listeners.length === 0)) {
-						delete typeIndex[contextId];
-						events[indexLenKey]--;
-					}
-				}
-			}
-		}
-
-		return this;
-	},
-
-	clearAllEventListeners: function () {
-		delete this[eventsKey];
-		return this;
-	},
-
-	fireEvent: function (type, data) { // (String[, Object])
-		if (!this.hasEventListeners(type)) {
-			return this;
-		}
-
-		var event = L.Util.extend({}, data, { type: type, target: this });
-
-		var events = this[eventsKey],
-		    listeners, i, len, typeIndex, contextId;
-
-		if (events[type]) {
-			// make sure adding/removing listeners inside other listeners won't cause infinite loop
-			listeners = events[type].slice();
-
-			for (i = 0, len = listeners.length; i < len; i++) {
-				listeners[i].action.call(listeners[i].context, event);
-			}
-		}
-
-		// fire event for the context-indexed listeners as well
-		typeIndex = events[type + '_idx'];
-
-		for (contextId in typeIndex) {
-			listeners = typeIndex[contextId].slice();
-
-			if (listeners) {
-				for (i = 0, len = listeners.length; i < len; i++) {
-					listeners[i].action.call(listeners[i].context, event);
-				}
-			}
-		}
-
-		return this;
-	},
-
-	addOneTimeEventListener: function (types, fn, context) {
-
-		if (L.Util.invokeEach(types, this.addOneTimeEventListener, this, fn, context)) { return this; }
-
-		var handler = L.bind(function () {
-			this
-			    .removeEventListener(types, fn, context)
-			    .removeEventListener(types, handler, context);
-		}, this);
-
-		return this
-		    .addEventListener(types, fn, context)
-		    .addEventListener(types, handler, context);
-	}
-};
-
-L.Mixin.Events.on = L.Mixin.Events.addEventListener;
-L.Mixin.Events.off = L.Mixin.Events.removeEventListener;
-L.Mixin.Events.once = L.Mixin.Events.addOneTimeEventListener;
-L.Mixin.Events.fire = L.Mixin.Events.fireEvent;
-
-
-/*
- * L.Browser handles different browser and feature detections for internal Leaflet use.
- */
-
-(function () {
-
-	var ie = 'ActiveXObject' in window,
-		ielt9 = ie && !document.addEventListener,
-
-	    // terrible browser detection to work around Safari / iOS / Android browser bugs
-	    ua = navigator.userAgent.toLowerCase(),
-	    webkit = ua.indexOf('webkit') !== -1,
-	    chrome = ua.indexOf('chrome') !== -1,
-	    phantomjs = ua.indexOf('phantom') !== -1,
-	    android = ua.indexOf('android') !== -1,
-	    android23 = ua.search('android [23]') !== -1,
-		gecko = ua.indexOf('gecko') !== -1,
-
-	    mobile = typeof orientation !== undefined + '',
-	    msPointer = window.navigator && window.navigator.msPointerEnabled &&
-	              window.navigator.msMaxTouchPoints && !window.PointerEvent,
-		pointer = (window.PointerEvent && window.navigator.pointerEnabled && window.navigator.maxTouchPoints) ||
-				  msPointer,
-	    retina = ('devicePixelRatio' in window && window.devicePixelRatio > 1) ||
-	             ('matchMedia' in window && window.matchMedia('(min-resolution:144dpi)') &&
-	              window.matchMedia('(min-resolution:144dpi)').matches),
-
-	    doc = document.documentElement,
-	    ie3d = ie && ('transition' in doc.style),
-	    webkit3d = ('WebKitCSSMatrix' in window) && ('m11' in new window.WebKitCSSMatrix()) && !android23,
-	    gecko3d = 'MozPerspective' in doc.style,
-	    opera3d = 'OTransition' in doc.style,
-	    any3d = !window.L_DISABLE_3D && (ie3d || webkit3d || gecko3d || opera3d) && !phantomjs;
-
-
-	// PhantomJS has 'ontouchstart' in document.documentElement, but doesn't actually support touch.
-	// https://github.com/Leaflet/Leaflet/pull/1434#issuecomment-13843151
-
-	var touch = !window.L_NO_TOUCH && !phantomjs && (function () {
-
-		var startName = 'ontouchstart';
-
-		// IE10+ (We simulate these into touch* events in L.DomEvent and L.DomEvent.Pointer) or WebKit, etc.
-		if (pointer || (startName in doc)) {
-			return true;
-		}
-
-		// Firefox/Gecko
-		var div = document.createElement('div'),
-		    supported = false;
-
-		if (!div.setAttribute) {
-			return false;
-		}
-		div.setAttribute(startName, 'return;');
-
-		if (typeof div[startName] === 'function') {
-			supported = true;
-		}
-
-		div.removeAttribute(startName);
-		div = null;
-
-		return supported;
-	}());
-
-
-	L.Browser = {
-		ie: ie,
-		ielt9: ielt9,
-		webkit: webkit,
-		gecko: gecko && !webkit && !window.opera && !ie,
-
-		android: android,
-		android23: android23,
-
-		chrome: chrome,
-
-		ie3d: ie3d,
-		webkit3d: webkit3d,
-		gecko3d: gecko3d,
-		opera3d: opera3d,
-		any3d: any3d,
-
-		mobile: mobile,
-		mobileWebkit: mobile && webkit,
-		mobileWebkit3d: mobile && webkit3d,
-		mobileOpera: mobile && window.opera,
-
-		touch: touch,
-		msPointer: msPointer,
-		pointer: pointer,
-
-		retina: retina
-	};
-
-}());
-
-
-/*
- * L.Point represents a point with x and y coordinates.
- */
-
-L.Point = function (/*Number*/ x, /*Number*/ y, /*Boolean*/ round) {
-	this.x = (round ? Math.round(x) : x);
-	this.y = (round ? Math.round(y) : y);
-};
-
-L.Point.prototype = {
-
-	clone: function () {
-		return new L.Point(this.x, this.y);
-	},
-
-	// non-destructive, returns a new point
-	add: function (point) {
-		return this.clone()._add(L.point(point));
-	},
-
-	// destructive, used directly for performance in situations where it's safe to modify existing point
-	_add: function (point) {
-		this.x += point.x;
-		this.y += point.y;
-		return this;
-	},
-
-	subtract: function (point) {
-		return this.clone()._subtract(L.point(point));
-	},
-
-	_subtract: function (point) {
-		this.x -= point.x;
-		this.y -= point.y;
-		return this;
-	},
-
-	divideBy: function (num) {
-		return this.clone()._divideBy(num);
-	},
-
-	_divideBy: function (num) {
-		this.x /= num;
-		this.y /= num;
-		return this;
-	},
-
-	multiplyBy: function (num) {
-		return this.clone()._multiplyBy(num);
-	},
-
-	_multiplyBy: function (num) {
-		this.x *= num;
-		this.y *= num;
-		return this;
-	},
-
-	round: function () {
-		return this.clone()._round();
-	},
-
-	_round: function () {
-		this.x = Math.round(this.x);
-		this.y = Math.round(this.y);
-		return this;
-	},
-
-	floor: function () {
-		return this.clone()._floor();
-	},
-
-	_floor: function () {
-		this.x = Math.floor(this.x);
-		this.y = Math.floor(this.y);
-		return this;
-	},
-
-	distanceTo: function (point) {
-		point = L.point(point);
-
-		var x = point.x - this.x,
-		    y = point.y - this.y;
-
-		return Math.sqrt(x * x + y * y);
-	},
-
-	equals: function (point) {
-		point = L.point(point);
-
-		return point.x === this.x &&
-		       point.y === this.y;
-	},
-
-	contains: function (point) {
-		point = L.point(point);
-
-		return Math.abs(point.x) <= Math.abs(this.x) &&
-		       Math.abs(point.y) <= Math.abs(this.y);
-	},
-
-	toString: function () {
-		return 'Point(' +
-		        L.Util.formatNum(this.x) + ', ' +
-		        L.Util.formatNum(this.y) + ')';
-	}
-};
-
-L.point = function (x, y, round) {
-	if (x instanceof L.Point) {
-		return x;
-	}
-	if (L.Util.isArray(x)) {
-		return new L.Point(x[0], x[1]);
-	}
-	if (x === undefined || x === null) {
-		return x;
-	}
-	return new L.Point(x, y, round);
-};
-
-
-/*
- * L.Bounds represents a rectangular area on the screen in pixel coordinates.
- */
-
-L.Bounds = function (a, b) { //(Point, Point) or Point[]
-	if (!a) { return; }
-
-	var points = b ? [a, b] : a;
-
-	for (var i = 0, len = points.length; i < len; i++) {
-		this.extend(points[i]);
-	}
-};
-
-L.Bounds.prototype = {
-	// extend the bounds to contain the given point
-	extend: function (point) { // (Point)
-		point = L.point(point);
-
-		if (!this.min && !this.max) {
-			this.min = point.clone();
-			this.max = point.clone();
-		} else {
-			this.min.x = Math.min(point.x, this.min.x);
-			this.max.x = Math.max(point.x, this.max.x);
-			this.min.y = Math.min(point.y, this.min.y);
-			this.max.y = Math.max(point.y, this.max.y);
-		}
-		return this;
-	},
-
-	getCenter: function (round) { // (Boolean) -> Point
-		return new L.Point(
-		        (this.min.x + this.max.x) / 2,
-		        (this.min.y + this.max.y) / 2, round);
-	},
-
-	getBottomLeft: function () { // -> Point
-		return new L.Point(this.min.x, this.max.y);
-	},
-
-	getTopRight: function () { // -> Point
-		return new L.Point(this.max.x, this.min.y);
-	},
-
-	getSize: function () {
-		return this.max.subtract(this.min);
-	},
-
-	contains: function (obj) { // (Bounds) or (Point) -> Boolean
-		var min, max;
-
-		if (typeof obj[0] === 'number' || obj instanceof L.Point) {
-			obj = L.point(obj);
-		} else {
-			obj = L.bounds(obj);
-		}
-
-		if (obj instanceof L.Bounds) {
-			min = obj.min;
-			max = obj.max;
-		} else {
-			min = max = obj;
-		}
-
-		return (min.x >= this.min.x) &&
-		       (max.x <= this.max.x) &&
-		       (min.y >= this.min.y) &&
-		       (max.y <= this.max.y);
-	},
-
-	intersects: function (bounds) { // (Bounds) -> Boolean
-		bounds = L.bounds(bounds);
-
-		var min = this.min,
-		    max = this.max,
-		    min2 = bounds.min,
-		    max2 = bounds.max,
-		    xIntersects = (max2.x >= min.x) && (min2.x <= max.x),
-		    yIntersects = (max2.y >= min.y) && (min2.y <= max.y);
-
-		return xIntersects && yIntersects;
-	},
-
-	isValid: function () {
-		return !!(this.min && this.max);
-	}
-};
-
-L.bounds = function (a, b) { // (Bounds) or (Point, Point) or (Point[])
-	if (!a || a instanceof L.Bounds) {
-		return a;
-	}
-	return new L.Bounds(a, b);
-};
-
-
-/*
- * L.Transformation is an utility class to perform simple point transformations through a 2d-matrix.
- */
-
-L.Transformation = function (a, b, c, d) {
-	this._a = a;
-	this._b = b;
-	this._c = c;
-	this._d = d;
-};
-
-L.Transformation.prototype = {
-	transform: function (point, scale) { // (Point, Number) -> Point
-		return this._transform(point.clone(), scale);
-	},
-
-	// destructive transform (faster)
-	_transform: function (point, scale) {
-		scale = scale || 1;
-		point.x = scale * (this._a * point.x + this._b);
-		point.y = scale * (this._c * point.y + this._d);
-		return point;
-	},
-
-	untransform: function (point, scale) {
-		scale = scale || 1;
-		return new L.Point(
-		        (point.x / scale - this._b) / this._a,
-		        (point.y / scale - this._d) / this._c);
-	}
-};
-
-
-/*
- * L.DomUtil contains various utility functions for working with DOM.
- */
-
-L.DomUtil = {
-	get: function (id) {
-		return (typeof id === 'string' ? document.getElementById(id) : id);
-	},
-
-	getStyle: function (el, style) {
-
-		var value = el.style[style];
-
-		if (!value && el.currentStyle) {
-			value = el.currentStyle[style];
-		}
-
-		if ((!value || value === 'auto') && document.defaultView) {
-			var css = document.defaultView.getComputedStyle(el, null);
-			value = css ? css[style] : null;
-		}
-
-		return value === 'auto' ? null : value;
-	},
-
-	getViewportOffset: function (element) {
-
-		var top = 0,
-		    left = 0,
-		    el = element,
-		    docBody = document.body,
-		    docEl = document.documentElement,
-		    pos;
-
-		do {
-			top  += el.offsetTop  || 0;
-			left += el.offsetLeft || 0;
-
-			//add borders
-			top += parseInt(L.DomUtil.getStyle(el, 'borderTopWidth'), 10) || 0;
-			left += parseInt(L.DomUtil.getStyle(el, 'borderLeftWidth'), 10) || 0;
-
-			pos = L.DomUtil.getStyle(el, 'position');
-
-			if (el.offsetParent === docBody && pos === 'absolute') { break; }
-
-			if (pos === 'fixed') {
-				top  += docBody.scrollTop  || docEl.scrollTop  || 0;
-				left += docBody.scrollLeft || docEl.scrollLeft || 0;
-				break;
-			}
-
-			if (pos === 'relative' && !el.offsetLeft) {
-				var width = L.DomUtil.getStyle(el, 'width'),
-				    maxWidth = L.DomUtil.getStyle(el, 'max-width'),
-				    r = el.getBoundingClientRect();
-
-				if (width !== 'none' || maxWidth !== 'none') {
-					left += r.left + el.clientLeft;
-				}
-
-				//calculate full y offset since we're breaking out of the loop
-				top += r.top + (docBody.scrollTop  || docEl.scrollTop  || 0);
-
-				break;
-			}
-
-			el = el.offsetParent;
-
-		} while (el);
-
-		el = element;
-
-		do {
-			if (el === docBody) { break; }
-
-			top  -= el.scrollTop  || 0;
-			left -= el.scrollLeft || 0;
-
-			el = el.parentNode;
-		} while (el);
-
-		return new L.Point(left, top);
-	},
-
-	documentIsLtr: function () {
-		if (!L.DomUtil._docIsLtrCached) {
-			L.DomUtil._docIsLtrCached = true;
-			L.DomUtil._docIsLtr = L.DomUtil.getStyle(document.body, 'direction') === 'ltr';
-		}
-		return L.DomUtil._docIsLtr;
-	},
-
-	create: function (tagName, className, container) {
-
-		var el = document.createElement(tagName);
-		el.className = className;
-
-		if (container) {
-			container.appendChild(el);
-		}
-
-		return el;
-	},
-
-	hasClass: function (el, name) {
-		if (el.classList !== undefined) {
-			return el.classList.contains(name);
-		}
-		var className = L.DomUtil._getClass(el);
-		return className.length > 0 && new RegExp('(^|\\s)' + name + '(\\s|$)').test(className);
-	},
-
-	addClass: function (el, name) {
-		if (el.classList !== undefined) {
-			var classes = L.Util.splitWords(name);
-			for (var i = 0, len = classes.length; i < len; i++) {
-				el.classList.add(classes[i]);
-			}
-		} else if (!L.DomUtil.hasClass(el, name)) {
-			var className = L.DomUtil._getClass(el);
-			L.DomUtil._setClass(el, (className ? className + ' ' : '') + name);
-		}
-	},
-
-	removeClass: function (el, name) {
-		if (el.classList !== undefined) {
-			el.classList.remove(name);
-		} else {
-			L.DomUtil._setClass(el, L.Util.trim((' ' + L.DomUtil._getClass(el) + ' ').replace(' ' + name + ' ', ' ')));
-		}
-	},
-
-	_setClass: function (el, name) {
-		if (el.className.baseVal === undefined) {
-			el.className = name;
-		} else {
-			// in case of SVG element
-			el.className.baseVal = name;
-		}
-	},
-
-	_getClass: function (el) {
-		return el.className.baseVal === undefined ? el.className : el.className.baseVal;
-	},
-
-	setOpacity: function (el, value) {
-
-		if ('opacity' in el.style) {
-			el.style.opacity = value;
-
-		} else if ('filter' in el.style) {
-
-			var filter = false,
-			    filterName = 'DXImageTransform.Microsoft.Alpha';
-
-			// filters collection throws an error if we try to retrieve a filter that doesn't exist
-			try {
-				filter = el.filters.item(filterName);
-			} catch (e) {
-				// don't set opacity to 1 if we haven't already set an opacity,
-				// it isn't needed and breaks transparent pngs.
-				if (value === 1) { return; }
-			}
-
-			value = Math.round(value * 100);
-
-			if (filter) {
-				filter.Enabled = (value !== 100);
-				filter.Opacity = value;
-			} else {
-				el.style.filter += ' progid:' + filterName + '(opacity=' + value + ')';
-			}
-		}
-	},
-
-	testProp: function (props) {
-
-		var style = document.documentElement.style;
-
-		for (var i = 0; i < props.length; i++) {
-			if (props[i] in style) {
-				return props[i];
-			}
-		}
-		return false;
-	},
-
-	getTranslateString: function (point) {
-		// on WebKit browsers (Chrome/Safari/iOS Safari/Android) using translate3d instead of translate
-		// makes animation smoother as it ensures HW accel is used. Firefox 13 doesn't care
-		// (same speed either way), Opera 12 doesn't support translate3d
-
-		var is3d = L.Browser.webkit3d,
-		    open = 'translate' + (is3d ? '3d' : '') + '(',
-		    close = (is3d ? ',0' : '') + ')';
-
-		return open + point.x + 'px,' + point.y + 'px' + close;
-	},
-
-	getScaleString: function (scale, origin) {
-
-		var preTranslateStr = L.DomUtil.getTranslateString(origin.add(origin.multiplyBy(-1 * scale))),
-		    scaleStr = ' scale(' + scale + ') ';
-
-		return preTranslateStr + scaleStr;
-	},
-
-	setPosition: function (el, point, disable3D) { // (HTMLElement, Point[, Boolean])
-
-		// jshint camelcase: false
-		el._leaflet_pos = point;
-
-		if (!disable3D && L.Browser.any3d) {
-			el.style[L.DomUtil.TRANSFORM] =  L.DomUtil.getTranslateString(point);
-		} else {
-			el.style.left = point.x + 'px';
-			el.style.top = point.y + 'px';
-		}
-	},
-
-	getPosition: function (el) {
-		// this method is only used for elements previously positioned using setPosition,
-		// so it's safe to cache the position for performance
-
-		// jshint camelcase: false
-		return el._leaflet_pos;
-	}
-};
-
-
-// prefix style property names
-
-L.DomUtil.TRANSFORM = L.DomUtil.testProp(
-        ['transform', 'WebkitTransform', 'OTransform', 'MozTransform', 'msTransform']);
-
-// webkitTransition comes first because some browser versions that drop vendor prefix don't do
-// the same for the transitionend event, in particular the Android 4.1 stock browser
-
-L.DomUtil.TRANSITION = L.DomUtil.testProp(
-        ['webkitTransition', 'transition', 'OTransition', 'MozTransition', 'msTransition']);
-
-L.DomUtil.TRANSITION_END =
-        L.DomUtil.TRANSITION === 'webkitTransition' || L.DomUtil.TRANSITION === 'OTransition' ?
-        L.DomUtil.TRANSITION + 'End' : 'transitionend';
-
-(function () {
-    if ('onselectstart' in document) {
-        L.extend(L.DomUtil, {
-            disableTextSelection: function () {
-                L.DomEvent.on(window, 'selectstart', L.DomEvent.preventDefault);
-            },
-
-            enableTextSelection: function () {
-                L.DomEvent.off(window, 'selectstart', L.DomEvent.preventDefault);
-            }
-        });
-    } else {
-        var userSelectProperty = L.DomUtil.testProp(
-            ['userSelect', 'WebkitUserSelect', 'OUserSelect', 'MozUserSelect', 'msUserSelect']);
-
-        L.extend(L.DomUtil, {
-            disableTextSelection: function () {
-                if (userSelectProperty) {
-                    var style = document.documentElement.style;
-                    this._userSelect = style[userSelectProperty];
-                    style[userSelectProperty] = 'none';
-                }
-            },
-
-            enableTextSelection: function () {
-                if (userSelectProperty) {
-                    document.documentElement.style[userSelectProperty] = this._userSelect;
-                    delete this._userSelect;
-                }
-            }
-        });
-    }
-
-	L.extend(L.DomUtil, {
-		disableImageDrag: function () {
-			L.DomEvent.on(window, 'dragstart', L.DomEvent.preventDefault);
-		},
-
-		enableImageDrag: function () {
-			L.DomEvent.off(window, 'dragstart', L.DomEvent.preventDefault);
-		}
-	});
-})();
-
-
-/*
- * L.LatLng represents a geographical point with latitude and longitude coordinates.
- */
-
-L.LatLng = function (lat, lng, alt) { // (Number, Number, Number)
-	lat = parseFloat(lat);
-	lng = parseFloat(lng);
-
-	if (isNaN(lat) || isNaN(lng)) {
-		throw new Error('Invalid LatLng object: (' + lat + ', ' + lng + ')');
-	}
-
-	this.lat = lat;
-	this.lng = lng;
-
-	if (alt !== undefined) {
-		this.alt = parseFloat(alt);
-	}
-};
-
-L.extend(L.LatLng, {
-	DEG_TO_RAD: Math.PI / 180,
-	RAD_TO_DEG: 180 / Math.PI,
-	MAX_MARGIN: 1.0E-9 // max margin of error for the "equals" check
-});
-
-L.LatLng.prototype = {
-	equals: function (obj) { // (LatLng) -> Boolean
-		if (!obj) { return false; }
-
-		obj = L.latLng(obj);
-
-		var margin = Math.max(
-		        Math.abs(this.lat - obj.lat),
-		        Math.abs(this.lng - obj.lng));
-
-		return margin <= L.LatLng.MAX_MARGIN;
-	},
-
-	toString: function (precision) { // (Number) -> String
-		return 'LatLng(' +
-		        L.Util.formatNum(this.lat, precision) + ', ' +
-		        L.Util.formatNum(this.lng, precision) + ')';
-	},
-
-	// Haversine distance formula, see http://en.wikipedia.org/wiki/Haversine_formula
-	// TODO move to projection code, LatLng shouldn't know about Earth
-	distanceTo: function (other) { // (LatLng) -> Number
-		other = L.latLng(other);
-
-		var R = 6378137, // earth radius in meters
-		    d2r = L.LatLng.DEG_TO_RAD,
-		    dLat = (other.lat - this.lat) * d2r,
-		    dLon = (other.lng - this.lng) * d2r,
-		    lat1 = this.lat * d2r,
-		    lat2 = other.lat * d2r,
-		    sin1 = Math.sin(dLat / 2),
-		    sin2 = Math.sin(dLon / 2);
-
-		var a = sin1 * sin1 + sin2 * sin2 * Math.cos(lat1) * Math.cos(lat2);
-
-		return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-	},
-
-	wrap: function (a, b) { // (Number, Number) -> LatLng
-		var lng = this.lng;
-
-		a = a || -180;
-		b = b ||  180;
-
-		lng = (lng + b) % (b - a) + (lng < a || lng === b ? b : a);
-
-		return new L.LatLng(this.lat, lng);
-	}
-};
-
-L.latLng = function (a, b) { // (LatLng) or ([Number, Number]) or (Number, Number)
-	if (a instanceof L.LatLng) {
-		return a;
-	}
-	if (L.Util.isArray(a)) {
-		if (typeof a[0] === 'number' || typeof a[0] === 'string') {
-			return new L.LatLng(a[0], a[1], a[2]);
-		} else {
-			return null;
-		}
-	}
-	if (a === undefined || a === null) {
-		return a;
-	}
-	if (typeof a === 'object' && 'lat' in a) {
-		return new L.LatLng(a.lat, 'lng' in a ? a.lng : a.lon);
-	}
-	if (b === undefined) {
-		return null;
-	}
-	return new L.LatLng(a, b);
-};
-
-
-
-/*
- * L.LatLngBounds represents a rectangular area on the map in geographical coordinates.
- */
-
-L.LatLngBounds = function (southWest, northEast) { // (LatLng, LatLng) or (LatLng[])
-	if (!southWest) { return; }
-
-	var latlngs = northEast ? [southWest, northEast] : southWest;
-
-	for (var i = 0, len = latlngs.length; i < len; i++) {
-		this.extend(latlngs[i]);
-	}
-};
-
-L.LatLngBounds.prototype = {
-	// extend the bounds to contain the given point or bounds
-	extend: function (obj) { // (LatLng) or (LatLngBounds)
-		if (!obj) { return this; }
-
-		var latLng = L.latLng(obj);
-		if (latLng !== null) {
-			obj = latLng;
-		} else {
-			obj = L.latLngBounds(obj);
-		}
-
-		if (obj instanceof L.LatLng) {
-			if (!this._southWest && !this._northEast) {
-				this._southWest = new L.LatLng(obj.lat, obj.lng);
-				this._northEast = new L.LatLng(obj.lat, obj.lng);
-			} else {
-				this._southWest.lat = Math.min(obj.lat, this._southWest.lat);
-				this._southWest.lng = Math.min(obj.lng, this._southWest.lng);
-
-				this._northEast.lat = Math.max(obj.lat, this._northEast.lat);
-				this._northEast.lng = Math.max(obj.lng, this._northEast.lng);
-			}
-		} else if (obj instanceof L.LatLngBounds) {
-			this.extend(obj._southWest);
-			this.extend(obj._northEast);
-		}
-		return this;
-	},
-
-	// extend the bounds by a percentage
-	pad: function (bufferRatio) { // (Number) -> LatLngBounds
-		var sw = this._southWest,
-		    ne = this._northEast,
-		    heightBuffer = Math.abs(sw.lat - ne.lat) * bufferRatio,
-		    widthBuffer = Math.abs(sw.lng - ne.lng) * bufferRatio;
-
-		return new L.LatLngBounds(
-		        new L.LatLng(sw.lat - heightBuffer, sw.lng - widthBuffer),
-		        new L.LatLng(ne.lat + heightBuffer, ne.lng + widthBuffer));
-	},
-
-	getCenter: function () { // -> LatLng
-		return new L.LatLng(
-		        (this._southWest.lat + this._northEast.lat) / 2,
-		        (this._southWest.lng + this._northEast.lng) / 2);
-	},
-
-	getSouthWest: function () {
-		return this._southWest;
-	},
-
-	getNorthEast: function () {
-		return this._northEast;
-	},
-
-	getNorthWest: function () {
-		return new L.LatLng(this.getNorth(), this.getWest());
-	},
-
-	getSouthEast: function () {
-		return new L.LatLng(this.getSouth(), this.getEast());
-	},
-
-	getWest: function () {
-		return this._southWest.lng;
-	},
-
-	getSouth: function () {
-		return this._southWest.lat;
-	},
-
-	getEast: function () {
-		return this._northEast.lng;
-	},
-
-	getNorth: function () {
-		return this._northEast.lat;
-	},
-
-	contains: function (obj) { // (LatLngBounds) or (LatLng) -> Boolean
-		if (typeof obj[0] === 'number' || obj instanceof L.LatLng) {
-			obj = L.latLng(obj);
-		} else {
-			obj = L.latLngBounds(obj);
-		}
-
-		var sw = this._southWest,
-		    ne = this._northEast,
-		    sw2, ne2;
-
-		if (obj instanceof L.LatLngBounds) {
-			sw2 = obj.getSouthWest();
-			ne2 = obj.getNorthEast();
-		} else {
-			sw2 = ne2 = obj;
-		}
-
-		return (sw2.lat >= sw.lat) && (ne2.lat <= ne.lat) &&
-		       (sw2.lng >= sw.lng) && (ne2.lng <= ne.lng);
-	},
-
-	intersects: function (bounds) { // (LatLngBounds)
-		bounds = L.latLngBounds(bounds);
-
-		var sw = this._southWest,
-		    ne = this._northEast,
-		    sw2 = bounds.getSouthWest(),
-		    ne2 = bounds.getNorthEast(),
-
-		    latIntersects = (ne2.lat >= sw.lat) && (sw2.lat <= ne.lat),
-		    lngIntersects = (ne2.lng >= sw.lng) && (sw2.lng <= ne.lng);
-
-		return latIntersects && lngIntersects;
-	},
-
-	toBBoxString: function () {
-		return [this.getWest(), this.getSouth(), this.getEast(), this.getNorth()].join(',');
-	},
-
-	equals: function (bounds) { // (LatLngBounds)
-		if (!bounds) { return false; }
-
-		bounds = L.latLngBounds(bounds);
-
-		return this._southWest.equals(bounds.getSouthWest()) &&
-		       this._northEast.equals(bounds.getNorthEast());
-	},
-
-	isValid: function () {
-		return !!(this._southWest && this._northEast);
-	}
-};
-
-//TODO International date line?
-
-L.latLngBounds = function (a, b) { // (LatLngBounds) or (LatLng, LatLng)
-	if (!a || a instanceof L.LatLngBounds) {
-		return a;
-	}
-	return new L.LatLngBounds(a, b);
-};
-
-
-/*
- * L.Projection contains various geographical projections used by CRS classes.
- */
-
-L.Projection = {};
-
-
-/*
- * Spherical Mercator is the most popular map projection, used by EPSG:3857 CRS used by default.
- */
-
-L.Projection.SphericalMercator = {
-	MAX_LATITUDE: 85.0511287798,
-
-	project: function (latlng) { // (LatLng) -> Point
-		var d = L.LatLng.DEG_TO_RAD,
-		    max = this.MAX_LATITUDE,
-		    lat = Math.max(Math.min(max, latlng.lat), -max),
-		    x = latlng.lng * d,
-		    y = lat * d;
-
-		y = Math.log(Math.tan((Math.PI / 4) + (y / 2)));
-
-		return new L.Point(x, y);
-	},
-
-	unproject: function (point) { // (Point, Boolean) -> LatLng
-		var d = L.LatLng.RAD_TO_DEG,
-		    lng = point.x * d,
-		    lat = (2 * Math.atan(Math.exp(point.y)) - (Math.PI / 2)) * d;
-
-		return new L.LatLng(lat, lng);
-	}
-};
-
-
-/*
- * Simple equirectangular (Plate Carree) projection, used by CRS like EPSG:4326 and Simple.
- */
-
-L.Projection.LonLat = {
-	project: function (latlng) {
-		return new L.Point(latlng.lng, latlng.lat);
-	},
-
-	unproject: function (point) {
-		return new L.LatLng(point.y, point.x);
-	}
-};
-
-
-/*
- * L.CRS is a base object for all defined CRS (Coordinate Reference Systems) in Leaflet.
- */
-
-L.CRS = {
-	latLngToPoint: function (latlng, zoom) { // (LatLng, Number) -> Point
-		var projectedPoint = this.projection.project(latlng),
-		    scale = this.scale(zoom);
-
-		return this.transformation._transform(projectedPoint, scale);
-	},
-
-	pointToLatLng: function (point, zoom) { // (Point, Number[, Boolean]) -> LatLng
-		var scale = this.scale(zoom),
-		    untransformedPoint = this.transformation.untransform(point, scale);
-
-		return this.projection.unproject(untransformedPoint);
-	},
-
-	project: function (latlng) {
-		return this.projection.project(latlng);
-	},
-
-	scale: function (zoom) {
-		return 256 * Math.pow(2, zoom);
-	},
-
-	getSize: function (zoom) {
-		var s = this.scale(zoom);
-		return L.point(s, s);
-	}
-};
-
-
-/*
- * A simple CRS that can be used for flat non-Earth maps like panoramas or game maps.
- */
-
-L.CRS.Simple = L.extend({}, L.CRS, {
-	projection: L.Projection.LonLat,
-	transformation: new L.Transformation(1, 0, -1, 0),
-
-	scale: function (zoom) {
-		return Math.pow(2, zoom);
-	}
-});
-
-
-/*
- * L.CRS.EPSG3857 (Spherical Mercator) is the most common CRS for web mapping
- * and is used by Leaflet by default.
- */
-
-L.CRS.EPSG3857 = L.extend({}, L.CRS, {
-	code: 'EPSG:3857',
-
-	projection: L.Projection.SphericalMercator,
-	transformation: new L.Transformation(0.5 / Math.PI, 0.5, -0.5 / Math.PI, 0.5),
-
-	project: function (latlng) { // (LatLng) -> Point
-		var projectedPoint = this.projection.project(latlng),
-		    earthRadius = 6378137;
-		return projectedPoint.multiplyBy(earthRadius);
-	}
-});
-
-L.CRS.EPSG900913 = L.extend({}, L.CRS.EPSG3857, {
-	code: 'EPSG:900913'
-});
-
-
-/*
- * L.CRS.EPSG4326 is a CRS popular among advanced GIS specialists.
- */
-
-L.CRS.EPSG4326 = L.extend({}, L.CRS, {
-	code: 'EPSG:4326',
-
-	projection: L.Projection.LonLat,
-	transformation: new L.Transformation(1 / 360, 0.5, -1 / 360, 0.5)
-});
-
-
-/*
- * L.Map is the central class of the API - it is used to create a map.
- */
-
-L.Map = L.Class.extend({
-
-	includes: L.Mixin.Events,
-
-	options: {
-		crs: L.CRS.EPSG3857,
-
-		/*
-		center: LatLng,
-		zoom: Number,
-		layers: Array,
-		*/
-
-		fadeAnimation: L.DomUtil.TRANSITION && !L.Browser.android23,
-		trackResize: true,
-		markerZoomAnimation: L.DomUtil.TRANSITION && L.Browser.any3d
-	},
-
-	initialize: function (id, options) { // (HTMLElement or String, Object)
-		options = L.setOptions(this, options);
-
-
-		this._initContainer(id);
-		this._initLayout();
-
-		// hack for https://github.com/Leaflet/Leaflet/issues/1980
-		this._onResize = L.bind(this._onResize, this);
-
-		this._initEvents();
-
-		if (options.maxBounds) {
-			this.setMaxBounds(options.maxBounds);
-		}
-
-		if (options.center && options.zoom !== undefined) {
-			this.setView(L.latLng(options.center), options.zoom, {reset: true});
-		}
-
-		this._handlers = [];
-
-		this._layers = {};
-		this._zoomBoundLayers = {};
-		this._tileLayersNum = 0;
-
-		this.callInitHooks();
-
-		this._addLayers(options.layers);
-	},
-
-
-	// public methods that modify map state
-
-	// replaced by animation-powered implementation in Map.PanAnimation.js
-	setView: function (center, zoom) {
-		zoom = zoom === undefined ? this.getZoom() : zoom;
-		this._resetView(L.latLng(center), this._limitZoom(zoom));
-		return this;
-	},
-
-	setZoom: function (zoom, options) {
-		if (!this._loaded) {
-			this._zoom = this._limitZoom(zoom);
-			return this;
-		}
-		return this.setView(this.getCenter(), zoom, {zoom: options});
-	},
-
-	zoomIn: function (delta, options) {
-		return this.setZoom(this._zoom + (delta || 1), options);
-	},
-
-	zoomOut: function (delta, options) {
-		return this.setZoom(this._zoom - (delta || 1), options);
-	},
-
-	setZoomAround: function (latlng, zoom, options) {
-		var scale = this.getZoomScale(zoom),
-		    viewHalf = this.getSize().divideBy(2),
-		    containerPoint = latlng instanceof L.Point ? latlng : this.latLngToContainerPoint(latlng),
-
-		    centerOffset = containerPoint.subtract(viewHalf).multiplyBy(1 - 1 / scale),
-		    newCenter = this.containerPointToLatLng(viewHalf.add(centerOffset));
-
-		return this.setView(newCenter, zoom, {zoom: options});
-	},
-
-	fitBounds: function (bounds, options) {
-
-		options = options || {};
-		bounds = bounds.getBounds ? bounds.getBounds() : L.latLngBounds(bounds);
-
-		var paddingTL = L.point(options.paddingTopLeft || options.padding || [0, 0]),
-		    paddingBR = L.point(options.paddingBottomRight || options.padding || [0, 0]),
-
-		    zoom = this.getBoundsZoom(bounds, false, paddingTL.add(paddingBR)),
-		    paddingOffset = paddingBR.subtract(paddingTL).divideBy(2),
-
-		    swPoint = this.project(bounds.getSouthWest(), zoom),
-		    nePoint = this.project(bounds.getNorthEast(), zoom),
-		    center = this.unproject(swPoint.add(nePoint).divideBy(2).add(paddingOffset), zoom);
-
-		zoom = options && options.maxZoom ? Math.min(options.maxZoom, zoom) : zoom;
-
-		return this.setView(center, zoom, options);
-	},
-
-	fitWorld: function (options) {
-		return this.fitBounds([[-90, -180], [90, 180]], options);
-	},
-
-	panTo: function (center, options) { // (LatLng)
-		return this.setView(center, this._zoom, {pan: options});
-	},
-
-	panBy: function (offset) { // (Point)
-		// replaced with animated panBy in Map.PanAnimation.js
-		this.fire('movestart');
-
-		this._rawPanBy(L.point(offset));
-
-		this.fire('move');
-		return this.fire('moveend');
-	},
-
-	setMaxBounds: function (bounds) {
-		bounds = L.latLngBounds(bounds);
-
-		this.options.maxBounds = bounds;
-
-		if (!bounds) {
-			return this.off('moveend', this._panInsideMaxBounds, this);
-		}
-
-		if (this._loaded) {
-			this._panInsideMaxBounds();
-		}
-
-		return this.on('moveend', this._panInsideMaxBounds, this);
-	},
-
-	panInsideBounds: function (bounds, options) {
-		var center = this.getCenter(),
-			newCenter = this._limitCenter(center, this._zoom, bounds);
-
-		if (center.equals(newCenter)) { return this; }
-
-		return this.panTo(newCenter, options);
-	},
-
-	addLayer: function (layer) {
-		// TODO method is too big, refactor
-
-		var id = L.stamp(layer);
-
-		if (this._layers[id]) { return this; }
-
-		this._layers[id] = layer;
-
-		// TODO getMaxZoom, getMinZoom in ILayer (instead of options)
-		if (layer.options && (!isNaN(layer.options.maxZoom) || !isNaN(layer.options.minZoom))) {
-			this._zoomBoundLayers[id] = layer;
-			this._updateZoomLevels();
-		}
-
-		// TODO looks ugly, refactor!!!
-		if (this.options.zoomAnimation && L.TileLayer && (layer instanceof L.TileLayer)) {
-			this._tileLayersNum++;
-			this._tileLayersToLoad++;
-			layer.on('load', this._onTileLayerLoad, this);
-		}
-
-		if (this._loaded) {
-			this._layerAdd(layer);
-		}
-
-		return this;
-	},
-
-	removeLayer: function (layer) {
-		var id = L.stamp(layer);
-
-		if (!this._layers[id]) { return this; }
-
-		if (this._loaded) {
-			layer.onRemove(this);
-		}
-
-		delete this._layers[id];
-
-		if (this._loaded) {
-			this.fire('layerremove', {layer: layer});
-		}
-
-		if (this._zoomBoundLayers[id]) {
-			delete this._zoomBoundLayers[id];
-			this._updateZoomLevels();
-		}
-
-		// TODO looks ugly, refactor
-		if (this.options.zoomAnimation && L.TileLayer && (layer instanceof L.TileLayer)) {
-			this._tileLayersNum--;
-			this._tileLayersToLoad--;
-			layer.off('load', this._onTileLayerLoad, this);
-		}
-
-		return this;
-	},
-
-	hasLayer: function (layer) {
-		if (!layer) { return false; }
-
-		return (L.stamp(layer) in this._layers);
-	},
-
-	eachLayer: function (method, context) {
-		for (var i in this._layers) {
-			method.call(context, this._layers[i]);
-		}
-		return this;
-	},
-
-	invalidateSize: function (options) {
-		if (!this._loaded) { return this; }
-
-		options = L.extend({
-			animate: false,
-			pan: true
-		}, options === true ? {animate: true} : options);
-
-		var oldSize = this.getSize();
-		this._sizeChanged = true;
-		this._initialCenter = null;
-
-		var newSize = this.getSize(),
-		    oldCenter = oldSize.divideBy(2).round(),
-		    newCenter = newSize.divideBy(2).round(),
-		    offset = oldCenter.subtract(newCenter);
-
-		if (!offset.x && !offset.y) { return this; }
-
-		if (options.animate && options.pan) {
-			this.panBy(offset);
-
-		} else {
-			if (options.pan) {
-				this._rawPanBy(offset);
-			}
-
-			this.fire('move');
-
-			if (options.debounceMoveend) {
-				clearTimeout(this._sizeTimer);
-				this._sizeTimer = setTimeout(L.bind(this.fire, this, 'moveend'), 200);
-			} else {
-				this.fire('moveend');
-			}
-		}
-
-		return this.fire('resize', {
-			oldSize: oldSize,
-			newSize: newSize
-		});
-	},
-
-	// TODO handler.addTo
-	addHandler: function (name, HandlerClass) {
-		if (!HandlerClass) { return this; }
-
-		var handler = this[name] = new HandlerClass(this);
-
-		this._handlers.push(handler);
-
-		if (this.options[name]) {
-			handler.enable();
-		}
-
-		return this;
-	},
-
-	remove: function () {
-		if (this._loaded) {
-			this.fire('unload');
-		}
-
-		this._initEvents('off');
-
-		try {
-			// throws error in IE6-8
-			delete this._container._leaflet;
-		} catch (e) {
-			this._container._leaflet = undefined;
-		}
-
-		this._clearPanes();
-		if (this._clearControlPos) {
-			this._clearControlPos();
-		}
-
-		this._clearHandlers();
-
-		return this;
-	},
-
-
-	// public methods for getting map state
-
-	getCenter: function () { // (Boolean) -> LatLng
-		this._checkIfLoaded();
-
-		if (this._initialCenter && !this._moved()) {
-			return this._initialCenter;
-		}
-		return this.layerPointToLatLng(this._getCenterLayerPoint());
-	},
-
-	getZoom: function () {
-		return this._zoom;
-	},
-
-	getBounds: function () {
-		var bounds = this.getPixelBounds(),
-		    sw = this.unproject(bounds.getBottomLeft()),
-		    ne = this.unproject(bounds.getTopRight());
-
-		return new L.LatLngBounds(sw, ne);
-	},
-
-	getMinZoom: function () {
-		return this.options.minZoom === undefined ?
-			(this._layersMinZoom === undefined ? 0 : this._layersMinZoom) :
-			this.options.minZoom;
-	},
-
-	getMaxZoom: function () {
-		return this.options.maxZoom === undefined ?
-			(this._layersMaxZoom === undefined ? Infinity : this._layersMaxZoom) :
-			this.options.maxZoom;
-	},
-
-	getBoundsZoom: function (bounds, inside, padding) { // (LatLngBounds[, Boolean, Point]) -> Number
-		bounds = L.latLngBounds(bounds);
-
-		var zoom = this.getMinZoom() - (inside ? 1 : 0),
-		    maxZoom = this.getMaxZoom(),
-		    size = this.getSize(),
-
-		    nw = bounds.getNorthWest(),
-		    se = bounds.getSouthEast(),
-
-		    zoomNotFound = true,
-		    boundsSize;
-
-		padding = L.point(padding || [0, 0]);
-
-		do {
-			zoom++;
-			boundsSize = this.project(se, zoom).subtract(this.project(nw, zoom)).add(padding);
-			zoomNotFound = !inside ? size.contains(boundsSize) : boundsSize.x < size.x || boundsSize.y < size.y;
-
-		} while (zoomNotFound && zoom <= maxZoom);
-
-		if (zoomNotFound && inside) {
-			return null;
-		}
-
-		return inside ? zoom : zoom - 1;
-	},
-
-	getSize: function () {
-		if (!this._size || this._sizeChanged) {
-			this._size = new L.Point(
-				this._container.clientWidth,
-				this._container.clientHeight);
-
-			this._sizeChanged = false;
-		}
-		return this._size.clone();
-	},
-
-	getPixelBounds: function () {
-		var topLeftPoint = this._getTopLeftPoint();
-		return new L.Bounds(topLeftPoint, topLeftPoint.add(this.getSize()));
-	},
-
-	getPixelOrigin: function () {
-		this._checkIfLoaded();
-		return this._initialTopLeftPoint;
-	},
-
-	getPanes: function () {
-		return this._panes;
-	},
-
-	getContainer: function () {
-		return this._container;
-	},
-
-
-	// TODO replace with universal implementation after refactoring projections
-
-	getZoomScale: function (toZoom) {
-		var crs = this.options.crs;
-		return crs.scale(toZoom) / crs.scale(this._zoom);
-	},
-
-	getScaleZoom: function (scale) {
-		return this._zoom + (Math.log(scale) / Math.LN2);
-	},
-
-
-	// conversion methods
-
-	project: function (latlng, zoom) { // (LatLng[, Number]) -> Point
-		zoom = zoom === undefined ? this._zoom : zoom;
-		return this.options.crs.latLngToPoint(L.latLng(latlng), zoom);
-	},
-
-	unproject: function (point, zoom) { // (Point[, Number]) -> LatLng
-		zoom = zoom === undefined ? this._zoom : zoom;
-		return this.options.crs.pointToLatLng(L.point(point), zoom);
-	},
-
-	layerPointToLatLng: function (point) { // (Point)
-		var projectedPoint = L.point(point).add(this.getPixelOrigin());
-		return this.unproject(projectedPoint);
-	},
-
-	latLngToLayerPoint: function (latlng) { // (LatLng)
-		var projectedPoint = this.project(L.latLng(latlng))._round();
-		return projectedPoint._subtract(this.getPixelOrigin());
-	},
-
-	containerPointToLayerPoint: function (point) { // (Point)
-		return L.point(point).subtract(this._getMapPanePos());
-	},
-
-	layerPointToContainerPoint: function (point) { // (Point)
-		return L.point(point).add(this._getMapPanePos());
-	},
-
-	containerPointToLatLng: function (point) {
-		var layerPoint = this.containerPointToLayerPoint(L.point(point));
-		return this.layerPointToLatLng(layerPoint);
-	},
-
-	latLngToContainerPoint: function (latlng) {
-		return this.layerPointToContainerPoint(this.latLngToLayerPoint(L.latLng(latlng)));
-	},
-
-	mouseEventToContainerPoint: function (e) { // (MouseEvent)
-		return L.DomEvent.getMousePosition(e, this._container);
-	},
-
-	mouseEventToLayerPoint: function (e) { // (MouseEvent)
-		return this.containerPointToLayerPoint(this.mouseEventToContainerPoint(e));
-	},
-
-	mouseEventToLatLng: function (e) { // (MouseEvent)
-		return this.layerPointToLatLng(this.mouseEventToLayerPoint(e));
-	},
-
-
-	// map initialization methods
-
-	_initContainer: function (id) {
-		var container = this._container = L.DomUtil.get(id);
-
-		if (!container) {
-			throw new Error('Map container not found.');
-		} else if (container._leaflet) {
-			throw new Error('Map container is already initialized.');
-		}
-
-		container._leaflet = true;
-	},
-
-	_initLayout: function () {
-		var container = this._container;
-
-		L.DomUtil.addClass(container, 'leaflet-container' +
-			(L.Browser.touch ? ' leaflet-touch' : '') +
-			(L.Browser.retina ? ' leaflet-retina' : '') +
-			(L.Browser.ielt9 ? ' leaflet-oldie' : '') +
-			(this.options.fadeAnimation ? ' leaflet-fade-anim' : ''));
-
-		var position = L.DomUtil.getStyle(container, 'position');
-
-		if (position !== 'absolute' && position !== 'relative' && position !== 'fixed') {
-			container.style.position = 'relative';
-		}
-
-		this._initPanes();
-
-		if (this._initControlPos) {
-			this._initControlPos();
-		}
-	},
-
-	_initPanes: function () {
-		var panes = this._panes = {};
-
-		this._mapPane = panes.mapPane = this._createPane('leaflet-map-pane', this._container);
-
-		this._tilePane = panes.tilePane = this._createPane('leaflet-tile-pane', this._mapPane);
-		panes.objectsPane = this._createPane('leaflet-objects-pane', this._mapPane);
-		panes.shadowPane = this._createPane('leaflet-shadow-pane');
-		panes.overlayPane = this._createPane('leaflet-overlay-pane');
-		panes.markerPane = this._createPane('leaflet-marker-pane');
-		panes.popupPane = this._createPane('leaflet-popup-pane');
-
-		var zoomHide = ' leaflet-zoom-hide';
-
-		if (!this.options.markerZoomAnimation) {
-			L.DomUtil.addClass(panes.markerPane, zoomHide);
-			L.DomUtil.addClass(panes.shadowPane, zoomHide);
-			L.DomUtil.addClass(panes.popupPane, zoomHide);
-		}
-	},
-
-	_createPane: function (className, container) {
-		return L.DomUtil.create('div', className, container || this._panes.objectsPane);
-	},
-
-	_clearPanes: function () {
-		this._container.removeChild(this._mapPane);
-	},
-
-	_addLayers: function (layers) {
-		layers = layers ? (L.Util.isArray(layers) ? layers : [layers]) : [];
-
-		for (var i = 0, len = layers.length; i < len; i++) {
-			this.addLayer(layers[i]);
-		}
-	},
-
-
-	// private methods that modify map state
-
-	_resetView: function (center, zoom, preserveMapOffset, afterZoomAnim) {
-
-		var zoomChanged = (this._zoom !== zoom);
-
-		if (!afterZoomAnim) {
-			this.fire('movestart');
-
-			if (zoomChanged) {
-				this.fire('zoomstart');
-			}
-		}
-
-		this._zoom = zoom;
-		this._initialCenter = center;
-
-		this._initialTopLeftPoint = this._getNewTopLeftPoint(center);
-
-		if (!preserveMapOffset) {
-			L.DomUtil.setPosition(this._mapPane, new L.Point(0, 0));
-		} else {
-			this._initialTopLeftPoint._add(this._getMapPanePos());
-		}
-
-		this._tileLayersToLoad = this._tileLayersNum;
-
-		var loading = !this._loaded;
-		this._loaded = true;
-
-		this.fire('viewreset', {hard: !preserveMapOffset});
-
-		if (loading) {
-			this.fire('load');
-			this.eachLayer(this._layerAdd, this);
-		}
-
-		this.fire('move');
-
-		if (zoomChanged || afterZoomAnim) {
-			this.fire('zoomend');
-		}
-
-		this.fire('moveend', {hard: !preserveMapOffset});
-	},
-
-	_rawPanBy: function (offset) {
-		L.DomUtil.setPosition(this._mapPane, this._getMapPanePos().subtract(offset));
-	},
-
-	_getZoomSpan: function () {
-		return this.getMaxZoom() - this.getMinZoom();
-	},
-
-	_updateZoomLevels: function () {
-		var i,
-			minZoom = Infinity,
-			maxZoom = -Infinity,
-			oldZoomSpan = this._getZoomSpan();
-
-		for (i in this._zoomBoundLayers) {
-			var layer = this._zoomBoundLayers[i];
-			if (!isNaN(layer.options.minZoom)) {
-				minZoom = Math.min(minZoom, layer.options.minZoom);
-			}
-			if (!isNaN(layer.options.maxZoom)) {
-				maxZoom = Math.max(maxZoom, layer.options.maxZoom);
-			}
-		}
-
-		if (i === undefined) { // we have no tilelayers
-			this._layersMaxZoom = this._layersMinZoom = undefined;
-		} else {
-			this._layersMaxZoom = maxZoom;
-			this._layersMinZoom = minZoom;
-		}
-
-		if (oldZoomSpan !== this._getZoomSpan()) {
-			this.fire('zoomlevelschange');
-		}
-	},
-
-	_panInsideMaxBounds: function () {
-		this.panInsideBounds(this.options.maxBounds);
-	},
-
-	_checkIfLoaded: function () {
-		if (!this._loaded) {
-			throw new Error('Set map center and zoom first.');
-		}
-	},
-
-	// map events
-
-	_initEvents: function (onOff) {
-		if (!L.DomEvent) { return; }
-
-		onOff = onOff || 'on';
-
-		L.DomEvent[onOff](this._container, 'click', this._onMouseClick, this);
-
-		var events = ['dblclick', 'mousedown', 'mouseup', 'mouseenter',
-		              'mouseleave', 'mousemove', 'contextmenu'],
-		    i, len;
-
-		for (i = 0, len = events.length; i < len; i++) {
-			L.DomEvent[onOff](this._container, events[i], this._fireMouseEvent, this);
-		}
-
-		if (this.options.trackResize) {
-			L.DomEvent[onOff](window, 'resize', this._onResize, this);
-		}
-	},
-
-	_onResize: function () {
-		L.Util.cancelAnimFrame(this._resizeRequest);
-		this._resizeRequest = L.Util.requestAnimFrame(
-		        function () { this.invalidateSize({debounceMoveend: true}); }, this, false, this._container);
-	},
-
-	_onMouseClick: function (e) {
-		if (!this._loaded || (!e._simulated &&
-		        ((this.dragging && this.dragging.moved()) ||
-		         (this.boxZoom  && this.boxZoom.moved()))) ||
-		            L.DomEvent._skipped(e)) { return; }
-
-		this.fire('preclick');
-		this._fireMouseEvent(e);
-	},
-
-	_fireMouseEvent: function (e) {
-		if (!this._loaded || L.DomEvent._skipped(e)) { return; }
-
-		var type = e.type;
-
-		type = (type === 'mouseenter' ? 'mouseover' : (type === 'mouseleave' ? 'mouseout' : type));
-
-		if (!this.hasEventListeners(type)) { return; }
-
-		if (type === 'contextmenu') {
-			L.DomEvent.preventDefault(e);
-		}
-
-		var containerPoint = this.mouseEventToContainerPoint(e),
-		    layerPoint = this.containerPointToLayerPoint(containerPoint),
-		    latlng = this.layerPointToLatLng(layerPoint);
-
-		this.fire(type, {
-			latlng: latlng,
-			layerPoint: layerPoint,
-			containerPoint: containerPoint,
-			originalEvent: e
-		});
-	},
-
-	_onTileLayerLoad: function () {
-		this._tileLayersToLoad--;
-		if (this._tileLayersNum && !this._tileLayersToLoad) {
-			this.fire('tilelayersload');
-		}
-	},
-
-	_clearHandlers: function () {
-		for (var i = 0, len = this._handlers.length; i < len; i++) {
-			this._handlers[i].disable();
-		}
-	},
-
-	whenReady: function (callback, context) {
-		if (this._loaded) {
-			callback.call(context || this, this);
-		} else {
-			this.on('load', callback, context);
-		}
-		return this;
-	},
-
-	_layerAdd: function (layer) {
-		layer.onAdd(this);
-		this.fire('layeradd', {layer: layer});
-	},
-
-
-	// private methods for getting map state
-
-	_getMapPanePos: function () {
-		return L.DomUtil.getPosition(this._mapPane);
-	},
-
-	_moved: function () {
-		var pos = this._getMapPanePos();
-		return pos && !pos.equals([0, 0]);
-	},
-
-	_getTopLeftPoint: function () {
-		return this.getPixelOrigin().subtract(this._getMapPanePos());
-	},
-
-	_getNewTopLeftPoint: function (center, zoom) {
-		var viewHalf = this.getSize()._divideBy(2);
-		// TODO round on display, not calculation to increase precision?
-		return this.project(center, zoom)._subtract(viewHalf)._round();
-	},
-
-	_latLngToNewLayerPoint: function (latlng, newZoom, newCenter) {
-		var topLeft = this._getNewTopLeftPoint(newCenter, newZoom).add(this._getMapPanePos());
-		return this.project(latlng, newZoom)._subtract(topLeft);
-	},
-
-	// layer point of the current center
-	_getCenterLayerPoint: function () {
-		return this.containerPointToLayerPoint(this.getSize()._divideBy(2));
-	},
-
-	// offset of the specified place to the current center in pixels
-	_getCenterOffset: function (latlng) {
-		return this.latLngToLayerPoint(latlng).subtract(this._getCenterLayerPoint());
-	},
-
-	// adjust center for view to get inside bounds
-	_limitCenter: function (center, zoom, bounds) {
-
-		if (!bounds) { return center; }
-
-		var centerPoint = this.project(center, zoom),
-		    viewHalf = this.getSize().divideBy(2),
-		    viewBounds = new L.Bounds(centerPoint.subtract(viewHalf), centerPoint.add(viewHalf)),
-		    offset = this._getBoundsOffset(viewBounds, bounds, zoom);
-
-		return this.unproject(centerPoint.add(offset), zoom);
-	},
-
-	// adjust offset for view to get inside bounds
-	_limitOffset: function (offset, bounds) {
-		if (!bounds) { return offset; }
-
-		var viewBounds = this.getPixelBounds(),
-		    newBounds = new L.Bounds(viewBounds.min.add(offset), viewBounds.max.add(offset));
-
-		return offset.add(this._getBoundsOffset(newBounds, bounds));
-	},
-
-	// returns offset needed for pxBounds to get inside maxBounds at a specified zoom
-	_getBoundsOffset: function (pxBounds, maxBounds, zoom) {
-		var nwOffset = this.project(maxBounds.getNorthWest(), zoom).subtract(pxBounds.min),
-		    seOffset = this.project(maxBounds.getSouthEast(), zoom).subtract(pxBounds.max),
-
-		    dx = this._rebound(nwOffset.x, -seOffset.x),
-		    dy = this._rebound(nwOffset.y, -seOffset.y);
-
-		return new L.Point(dx, dy);
-	},
-
-	_rebound: function (left, right) {
-		return left + right > 0 ?
-			Math.round(left - right) / 2 :
-			Math.max(0, Math.ceil(left)) - Math.max(0, Math.floor(right));
-	},
-
-	_limitZoom: function (zoom) {
-		var min = this.getMinZoom(),
-		    max = this.getMaxZoom();
-
-		return Math.max(min, Math.min(max, zoom));
-	}
-});
-
-L.map = function (id, options) {
-	return new L.Map(id, options);
-};
-
-
-/*
- * Mercator projection that takes into account that the Earth is not a perfect sphere.
- * Less popular than spherical mercator; used by projections like EPSG:3395.
- */
-
-L.Projection.Mercator = {
-	MAX_LATITUDE: 85.0840591556,
-
-	R_MINOR: 6356752.314245179,
-	R_MAJOR: 6378137,
-
-	project: function (latlng) { // (LatLng) -> Point
-		var d = L.LatLng.DEG_TO_RAD,
-		    max = this.MAX_LATITUDE,
-		    lat = Math.max(Math.min(max, latlng.lat), -max),
-		    r = this.R_MAJOR,
-		    r2 = this.R_MINOR,
-		    x = latlng.lng * d * r,
-		    y = lat * d,
-		    tmp = r2 / r,
-		    eccent = Math.sqrt(1.0 - tmp * tmp),
-		    con = eccent * Math.sin(y);
-
-		con = Math.pow((1 - con) / (1 + con), eccent * 0.5);
-
-		var ts = Math.tan(0.5 * ((Math.PI * 0.5) - y)) / con;
-		y = -r * Math.log(ts);
-
-		return new L.Point(x, y);
-	},
-
-	unproject: function (point) { // (Point, Boolean) -> LatLng
-		var d = L.LatLng.RAD_TO_DEG,
-		    r = this.R_MAJOR,
-		    r2 = this.R_MINOR,
-		    lng = point.x * d / r,
-		    tmp = r2 / r,
-		    eccent = Math.sqrt(1 - (tmp * tmp)),
-		    ts = Math.exp(- point.y / r),
-		    phi = (Math.PI / 2) - 2 * Math.atan(ts),
-		    numIter = 15,
-		    tol = 1e-7,
-		    i = numIter,
-		    dphi = 0.1,
-		    con;
-
-		while ((Math.abs(dphi) > tol) && (--i > 0)) {
-			con = eccent * Math.sin(phi);
-			dphi = (Math.PI / 2) - 2 * Math.atan(ts *
-			            Math.pow((1.0 - con) / (1.0 + con), 0.5 * eccent)) - phi;
-			phi += dphi;
-		}
-
-		return new L.LatLng(phi * d, lng);
-	}
-};
-
-
-
-L.CRS.EPSG3395 = L.extend({}, L.CRS, {
-	code: 'EPSG:3395',
-
-	projection: L.Projection.Mercator,
-
-	transformation: (function () {
-		var m = L.Projection.Mercator,
-		    r = m.R_MAJOR,
-		    scale = 0.5 / (Math.PI * r);
-
-		return new L.Transformation(scale, 0.5, -scale, 0.5);
-	}())
-});
-
-
-/*
- * L.TileLayer is used for standard xyz-numbered tile layers.
- */
-
-L.TileLayer = L.Class.extend({
-	includes: L.Mixin.Events,
-
-	options: {
-		minZoom: 0,
-		maxZoom: 18,
-		tileSize: 256,
-		subdomains: 'abc',
-		errorTileUrl: '',
-		attribution: '',
-		zoomOffset: 0,
-		opacity: 1,
-		/*
-		maxNativeZoom: null,
-		zIndex: null,
-		tms: false,
-		continuousWorld: false,
-		noWrap: false,
-		zoomReverse: false,
-		detectRetina: false,
-		reuseTiles: false,
-		bounds: false,
-		*/
-		unloadInvisibleTiles: L.Browser.mobile,
-		updateWhenIdle: L.Browser.mobile
-	},
-
-	initialize: function (url, options) {
-		options = L.setOptions(this, options);
-
-		// detecting retina displays, adjusting tileSize and zoom levels
-		if (options.detectRetina && L.Browser.retina && options.maxZoom > 0) {
-
-			options.tileSize = Math.floor(options.tileSize / 2);
-			options.zoomOffset++;
-
-			if (options.minZoom > 0) {
-				options.minZoom--;
-			}
-			this.options.maxZoom--;
-		}
-
-		if (options.bounds) {
-			options.bounds = L.latLngBounds(options.bounds);
-		}
-
-		this._url = url;
-
-		var subdomains = this.options.subdomains;
-
-		if (typeof subdomains === 'string') {
-			this.options.subdomains = subdomains.split('');
-		}
-	},
-
-	onAdd: function (map) {
-		this._map = map;
-		this._animated = map._zoomAnimated;
-
-		// create a container div for tiles
-		this._initContainer();
-
-		// set up events
-		map.on({
-			'viewreset': this._reset,
-			'moveend': this._update
-		}, this);
-
-		if (this._animated) {
-			map.on({
-				'zoomanim': this._animateZoom,
-				'zoomend': this._endZoomAnim
-			}, this);
-		}
-
-		if (!this.options.updateWhenIdle) {
-			this._limitedUpdate = L.Util.limitExecByInterval(this._update, 150, this);
-			map.on('move', this._limitedUpdate, this);
-		}
-
-		this._reset();
-		this._update();
-	},
-
-	addTo: function (map) {
-		map.addLayer(this);
-		return this;
-	},
-
-	onRemove: function (map) {
-		this._container.parentNode.removeChild(this._container);
-
-		map.off({
-			'viewreset': this._reset,
-			'moveend': this._update
-		}, this);
-
-		if (this._animated) {
-			map.off({
-				'zoomanim': this._animateZoom,
-				'zoomend': this._endZoomAnim
-			}, this);
-		}
-
-		if (!this.options.updateWhenIdle) {
-			map.off('move', this._limitedUpdate, this);
-		}
-
-		this._container = null;
-		this._map = null;
-	},
-
-	bringToFront: function () {
-		var pane = this._map._panes.tilePane;
-
-		if (this._container) {
-			pane.appendChild(this._container);
-			this._setAutoZIndex(pane, Math.max);
-		}
-
-		return this;
-	},
-
-	bringToBack: function () {
-		var pane = this._map._panes.tilePane;
-
-		if (this._container) {
-			pane.insertBefore(this._container, pane.firstChild);
-			this._setAutoZIndex(pane, Math.min);
-		}
-
-		return this;
-	},
-
-	getAttribution: function () {
-		return this.options.attribution;
-	},
-
-	getContainer: function () {
-		return this._container;
-	},
-
-	setOpacity: function (opacity) {
-		this.options.opacity = opacity;
-
-		if (this._map) {
-			this._updateOpacity();
-		}
-
-		return this;
-	},
-
-	setZIndex: function (zIndex) {
-		this.options.zIndex = zIndex;
-		this._updateZIndex();
-
-		return this;
-	},
-
-	setUrl: function (url, noRedraw) {
-		this._url = url;
-
-		if (!noRedraw) {
-			this.redraw();
-		}
-
-		return this;
-	},
-
-	redraw: function () {
-		if (this._map) {
-			this._reset({hard: true});
-			this._update();
-		}
-		return this;
-	},
-
-	_updateZIndex: function () {
-		if (this._container && this.options.zIndex !== undefined) {
-			this._container.style.zIndex = this.options.zIndex;
-		}
-	},
-
-	_setAutoZIndex: function (pane, compare) {
-
-		var layers = pane.children,
-		    edgeZIndex = -compare(Infinity, -Infinity), // -Infinity for max, Infinity for min
-		    zIndex, i, len;
-
-		for (i = 0, len = layers.length; i < len; i++) {
-
-			if (layers[i] !== this._container) {
-				zIndex = parseInt(layers[i].style.zIndex, 10);
-
-				if (!isNaN(zIndex)) {
-					edgeZIndex = compare(edgeZIndex, zIndex);
-				}
-			}
-		}
-
-		this.options.zIndex = this._container.style.zIndex =
-		        (isFinite(edgeZIndex) ? edgeZIndex : 0) + compare(1, -1);
-	},
-
-	_updateOpacity: function () {
-		var i,
-		    tiles = this._tiles;
-
-		if (L.Browser.ielt9) {
-			for (i in tiles) {
-				L.DomUtil.setOpacity(tiles[i], this.options.opacity);
-			}
-		} else {
-			L.DomUtil.setOpacity(this._container, this.options.opacity);
-		}
-	},
-
-	_initContainer: function () {
-		var tilePane = this._map._panes.tilePane;
-
-		if (!this._container) {
-			this._container = L.DomUtil.create('div', 'leaflet-layer');
-
-			this._updateZIndex();
-
-			if (this._animated) {
-				var className = 'leaflet-tile-container';
-
-				this._bgBuffer = L.DomUtil.create('div', className, this._container);
-				this._tileContainer = L.DomUtil.create('div', className, this._container);
-
-			} else {
-				this._tileContainer = this._container;
-			}
-
-			tilePane.appendChild(this._container);
-
-			if (this.options.opacity < 1) {
-				this._updateOpacity();
-			}
-		}
-	},
-
-	_reset: function (e) {
-		for (var key in this._tiles) {
-			this.fire('tileunload', {tile: this._tiles[key]});
-		}
-
-		this._tiles = {};
-		this._tilesToLoad = 0;
-
-		if (this.options.reuseTiles) {
-			this._unusedTiles = [];
-		}
-
-		this._tileContainer.innerHTML = '';
-
-		if (this._animated && e && e.hard) {
-			this._clearBgBuffer();
-		}
-
-		this._initContainer();
-	},
-
-	_getTileSize: function () {
-		var map = this._map,
-		    zoom = map.getZoom() + this.options.zoomOffset,
-		    zoomN = this.options.maxNativeZoom,
-		    tileSize = this.options.tileSize;
-
-		if (zoomN && zoom > zoomN) {
-			tileSize = Math.round(map.getZoomScale(zoom) / map.getZoomScale(zoomN) * tileSize);
-		}
-
-		return tileSize;
-	},
-
-	_update: function () {
-
-		if (!this._map) { return; }
-
-		var map = this._map,
-		    bounds = map.getPixelBounds(),
-		    zoom = map.getZoom(),
-		    tileSize = this._getTileSize();
-
-		if (zoom > this.options.maxZoom || zoom < this.options.minZoom) {
-			return;
-		}
-
-		var tileBounds = L.bounds(
-		        bounds.min.divideBy(tileSize)._floor(),
-		        bounds.max.divideBy(tileSize)._floor());
-
-		this._addTilesFromCenterOut(tileBounds);
-
-		if (this.options.unloadInvisibleTiles || this.options.reuseTiles) {
-			this._removeOtherTiles(tileBounds);
-		}
-	},
-
-	_addTilesFromCenterOut: function (bounds) {
-		var queue = [],
-		    center = bounds.getCenter();
-
-		var j, i, point;
-
-		for (j = bounds.min.y; j <= bounds.max.y; j++) {
-			for (i = bounds.min.x; i <= bounds.max.x; i++) {
-				point = new L.Point(i, j);
-
-				if (this._tileShouldBeLoaded(point)) {
-					queue.push(point);
-				}
-			}
-		}
-
-		var tilesToLoad = queue.length;
-
-		if (tilesToLoad === 0) { return; }
-
-		// load tiles in order of their distance to center
-		queue.sort(function (a, b) {
-			return a.distanceTo(center) - b.distanceTo(center);
-		});
-
-		var fragment = document.createDocumentFragment();
-
-		// if its the first batch of tiles to load
-		if (!this._tilesToLoad) {
-			this.fire('loading');
-		}
-
-		this._tilesToLoad += tilesToLoad;
-
-		for (i = 0; i < tilesToLoad; i++) {
-			this._addTile(queue[i], fragment);
-		}
-
-		this._tileContainer.appendChild(fragment);
-	},
-
-	_tileShouldBeLoaded: function (tilePoint) {
-		if ((tilePoint.x + ':' + tilePoint.y) in this._tiles) {
-			return false; // already loaded
-		}
-
-		var options = this.options;
-
-		if (!options.continuousWorld) {
-			var limit = this._getWrapTileNum();
-
-			// don't load if exceeds world bounds
-			if ((options.noWrap && (tilePoint.x < 0 || tilePoint.x >= limit.x)) ||
-				tilePoint.y < 0 || tilePoint.y >= limit.y) { return false; }
-		}
-
-		if (options.bounds) {
-			var tileSize = options.tileSize,
-			    nwPoint = tilePoint.multiplyBy(tileSize),
-			    sePoint = nwPoint.add([tileSize, tileSize]),
-			    nw = this._map.unproject(nwPoint),
-			    se = this._map.unproject(sePoint);
-
-			// TODO temporary hack, will be removed after refactoring projections
-			// https://github.com/Leaflet/Leaflet/issues/1618
-			if (!options.continuousWorld && !options.noWrap) {
-				nw = nw.wrap();
-				se = se.wrap();
-			}
-
-			if (!options.bounds.intersects([nw, se])) { return false; }
-		}
-
-		return true;
-	},
-
-	_removeOtherTiles: function (bounds) {
-		var kArr, x, y, key;
-
-		for (key in this._tiles) {
-			kArr = key.split(':');
-			x = parseInt(kArr[0], 10);
-			y = parseInt(kArr[1], 10);
-
-			// remove tile if it's out of bounds
-			if (x < bounds.min.x || x > bounds.max.x || y < bounds.min.y || y > bounds.max.y) {
-				this._removeTile(key);
-			}
-		}
-	},
-
-	_removeTile: function (key) {
-		var tile = this._tiles[key];
-
-		this.fire('tileunload', {tile: tile, url: tile.src});
-
-		if (this.options.reuseTiles) {
-			L.DomUtil.removeClass(tile, 'leaflet-tile-loaded');
-			this._unusedTiles.push(tile);
-
-		} else if (tile.parentNode === this._tileContainer) {
-			this._tileContainer.removeChild(tile);
-		}
-
-		// for https://github.com/CloudMade/Leaflet/issues/137
-		if (!L.Browser.android) {
-			tile.onload = null;
-			tile.src = L.Util.emptyImageUrl;
-		}
-
-		delete this._tiles[key];
-	},
-
-	_addTile: function (tilePoint, container) {
-		var tilePos = this._getTilePos(tilePoint);
-
-		// get unused tile - or create a new tile
-		var tile = this._getTile();
-
-		/*
-		Chrome 20 layouts much faster with top/left (verify with timeline, frames)
-		Android 4 browser has display issues with top/left and requires transform instead
-		(other browsers don't currently care) - see debug/hacks/jitter.html for an example
-		*/
-		L.DomUtil.setPosition(tile, tilePos, L.Browser.chrome);
-
-		this._tiles[tilePoint.x + ':' + tilePoint.y] = tile;
-
-		this._loadTile(tile, tilePoint);
-
-		if (tile.parentNode !== this._tileContainer) {
-			container.appendChild(tile);
-		}
-	},
-
-	_getZoomForUrl: function () {
-
-		var options = this.options,
-		    zoom = this._map.getZoom();
-
-		if (options.zoomReverse) {
-			zoom = options.maxZoom - zoom;
-		}
-
-		zoom += options.zoomOffset;
-
-		return options.maxNativeZoom ? Math.min(zoom, options.maxNativeZoom) : zoom;
-	},
-
-	_getTilePos: function (tilePoint) {
-		var origin = this._map.getPixelOrigin(),
-		    tileSize = this._getTileSize();
-
-		return tilePoint.multiplyBy(tileSize).subtract(origin);
-	},
-
-	// image-specific code (override to implement e.g. Canvas or SVG tile layer)
-
-	getTileUrl: function (tilePoint) {
-		return L.Util.template(this._url, L.extend({
-			s: this._getSubdomain(tilePoint),
-			z: tilePoint.z,
-			x: tilePoint.x,
-			y: tilePoint.y
-		}, this.options));
-	},
-
-	_getWrapTileNum: function () {
-		var crs = this._map.options.crs,
-		    size = crs.getSize(this._map.getZoom());
-		return size.divideBy(this._getTileSize())._floor();
-	},
-
-	_adjustTilePoint: function (tilePoint) {
-
-		var limit = this._getWrapTileNum();
-
-		// wrap tile coordinates
-		if (!this.options.continuousWorld && !this.options.noWrap) {
-			tilePoint.x = ((tilePoint.x % limit.x) + limit.x) % limit.x;
-		}
-
-		if (this.options.tms) {
-			tilePoint.y = limit.y - tilePoint.y - 1;
-		}
-
-		tilePoint.z = this._getZoomForUrl();
-	},
-
-	_getSubdomain: function (tilePoint) {
-		var index = Math.abs(tilePoint.x + tilePoint.y) % this.options.subdomains.length;
-		return this.options.subdomains[index];
-	},
-
-	_getTile: function () {
-		if (this.options.reuseTiles && this._unusedTiles.length > 0) {
-			var tile = this._unusedTiles.pop();
-			this._resetTile(tile);
-			return tile;
-		}
-		return this._createTile();
-	},
-
-	// Override if data stored on a tile needs to be cleaned up before reuse
-	_resetTile: function (/*tile*/) {},
-
-	_createTile: function () {
-		var tile = L.DomUtil.create('img', 'leaflet-tile');
-		tile.style.width = tile.style.height = this._getTileSize() + 'px';
-		tile.galleryimg = 'no';
-
-		tile.onselectstart = tile.onmousemove = L.Util.falseFn;
-
-		if (L.Browser.ielt9 && this.options.opacity !== undefined) {
-			L.DomUtil.setOpacity(tile, this.options.opacity);
-		}
-		// without this hack, tiles disappear after zoom on Chrome for Android
-		// https://github.com/Leaflet/Leaflet/issues/2078
-		if (L.Browser.mobileWebkit3d) {
-			tile.style.WebkitBackfaceVisibility = 'hidden';
-		}
-		return tile;
-	},
-
-	_loadTile: function (tile, tilePoint) {
-		tile._layer  = this;
-		tile.onload  = this._tileOnLoad;
-		tile.onerror = this._tileOnError;
-
-		this._adjustTilePoint(tilePoint);
-		tile.src     = this.getTileUrl(tilePoint);
-
-		this.fire('tileloadstart', {
-			tile: tile,
-			url: tile.src
-		});
-	},
-
-	_tileLoaded: function () {
-		this._tilesToLoad--;
-
-		if (this._animated) {
-			L.DomUtil.addClass(this._tileContainer, 'leaflet-zoom-animated');
-		}
-
-		if (!this._tilesToLoad) {
-			this.fire('load');
-
-			if (this._animated) {
-				// clear scaled tiles after all new tiles are loaded (for performance)
-				clearTimeout(this._clearBgBufferTimer);
-				this._clearBgBufferTimer = setTimeout(L.bind(this._clearBgBuffer, this), 500);
-			}
-		}
-	},
-
-	_tileOnLoad: function () {
-		var layer = this._layer;
-
-		//Only if we are loading an actual image
-		if (this.src !== L.Util.emptyImageUrl) {
-			L.DomUtil.addClass(this, 'leaflet-tile-loaded');
-
-			layer.fire('tileload', {
-				tile: this,
-				url: this.src
-			});
-		}
-
-		layer._tileLoaded();
-	},
-
-	_tileOnError: function () {
-		var layer = this._layer;
-
-		layer.fire('tileerror', {
-			tile: this,
-			url: this.src
-		});
-
-		var newUrl = layer.options.errorTileUrl;
-		if (newUrl) {
-			this.src = newUrl;
-		}
-
-		layer._tileLoaded();
-	}
-});
-
-L.tileLayer = function (url, options) {
-	return new L.TileLayer(url, options);
-};
-
-
-/*
- * L.TileLayer.WMS is used for putting WMS tile layers on the map.
- */
-
-L.TileLayer.WMS = L.TileLayer.extend({
-
-	defaultWmsParams: {
-		service: 'WMS',
-		request: 'GetMap',
-		version: '1.1.1',
-		layers: '',
-		styles: '',
-		format: 'image/jpeg',
-		transparent: false
-	},
-
-	initialize: function (url, options) { // (String, Object)
-
-		this._url = url;
-
-		var wmsParams = L.extend({}, this.defaultWmsParams),
-		    tileSize = options.tileSize || this.options.tileSize;
-
-		if (options.detectRetina && L.Browser.retina) {
-			wmsParams.width = wmsParams.height = tileSize * 2;
-		} else {
-			wmsParams.width = wmsParams.height = tileSize;
-		}
-
-		for (var i in options) {
-			// all keys that are not TileLayer options go to WMS params
-			if (!this.options.hasOwnProperty(i) && i !== 'crs') {
-				wmsParams[i] = options[i];
-			}
-		}
-
-		this.wmsParams = wmsParams;
-
-		L.setOptions(this, options);
-	},
-
-	onAdd: function (map) {
-
-		this._crs = this.options.crs || map.options.crs;
-
-		this._wmsVersion = parseFloat(this.wmsParams.version);
-
-		var projectionKey = this._wmsVersion >= 1.3 ? 'crs' : 'srs';
-		this.wmsParams[projectionKey] = this._crs.code;
-
-		L.TileLayer.prototype.onAdd.call(this, map);
-	},
-
-	getTileUrl: function (tilePoint) { // (Point, Number) -> String
-
-		var map = this._map,
-		    tileSize = this.options.tileSize,
-
-		    nwPoint = tilePoint.multiplyBy(tileSize),
-		    sePoint = nwPoint.add([tileSize, tileSize]),
-
-		    nw = this._crs.project(map.unproject(nwPoint, tilePoint.z)),
-		    se = this._crs.project(map.unproject(sePoint, tilePoint.z)),
-		    bbox = this._wmsVersion >= 1.3 && this._crs === L.CRS.EPSG4326 ?
-		        [se.y, nw.x, nw.y, se.x].join(',') :
-		        [nw.x, se.y, se.x, nw.y].join(','),
-
-		    url = L.Util.template(this._url, {s: this._getSubdomain(tilePoint)});
-
-		return url + L.Util.getParamString(this.wmsParams, url, true) + '&BBOX=' + bbox;
-	},
-
-	setParams: function (params, noRedraw) {
-
-		L.extend(this.wmsParams, params);
-
-		if (!noRedraw) {
-			this.redraw();
-		}
-
-		return this;
-	}
-});
-
-L.tileLayer.wms = function (url, options) {
-	return new L.TileLayer.WMS(url, options);
-};
-
-
-/*
- * L.TileLayer.Canvas is a class that you can use as a base for creating
- * dynamically drawn Canvas-based tile layers.
- */
-
-L.TileLayer.Canvas = L.TileLayer.extend({
-	options: {
-		async: false
-	},
-
-	initialize: function (options) {
-		L.setOptions(this, options);
-	},
-
-	redraw: function () {
-		if (this._map) {
-			this._reset({hard: true});
-			this._update();
-		}
-
-		for (var i in this._tiles) {
-			this._redrawTile(this._tiles[i]);
-		}
-		return this;
-	},
-
-	_redrawTile: function (tile) {
-		this.drawTile(tile, tile._tilePoint, this._map._zoom);
-	},
-
-	_createTile: function () {
-		var tile = L.DomUtil.create('canvas', 'leaflet-tile');
-		tile.width = tile.height = this.options.tileSize;
-		tile.onselectstart = tile.onmousemove = L.Util.falseFn;
-		return tile;
-	},
-
-	_loadTile: function (tile, tilePoint) {
-		tile._layer = this;
-		tile._tilePoint = tilePoint;
-
-		this._redrawTile(tile);
-
-		if (!this.options.async) {
-			this.tileDrawn(tile);
-		}
-	},
-
-	drawTile: function (/*tile, tilePoint*/) {
-		// override with rendering code
-	},
-
-	tileDrawn: function (tile) {
-		this._tileOnLoad.call(tile);
-	}
-});
-
-
-L.tileLayer.canvas = function (options) {
-	return new L.TileLayer.Canvas(options);
-};
-
-
-/*
- * L.ImageOverlay is used to overlay images over the map (to specific geographical bounds).
- */
-
-L.ImageOverlay = L.Class.extend({
-	includes: L.Mixin.Events,
-
-	options: {
-		opacity: 1
-	},
-
-	initialize: function (url, bounds, options) { // (String, LatLngBounds, Object)
-		this._url = url;
-		this._bounds = L.latLngBounds(bounds);
-
-		L.setOptions(this, options);
-	},
-
-	onAdd: function (map) {
-		this._map = map;
-
-		if (!this._image) {
-			this._initImage();
-		}
-
-		map._panes.overlayPane.appendChild(this._image);
-
-		map.on('viewreset', this._reset, this);
-
-		if (map.options.zoomAnimation && L.Browser.any3d) {
-			map.on('zoomanim', this._animateZoom, this);
-		}
-
-		this._reset();
-	},
-
-	onRemove: function (map) {
-		map.getPanes().overlayPane.removeChild(this._image);
-
-		map.off('viewreset', this._reset, this);
-
-		if (map.options.zoomAnimation) {
-			map.off('zoomanim', this._animateZoom, this);
-		}
-	},
-
-	addTo: function (map) {
-		map.addLayer(this);
-		return this;
-	},
-
-	setOpacity: function (opacity) {
-		this.options.opacity = opacity;
-		this._updateOpacity();
-		return this;
-	},
-
-	// TODO remove bringToFront/bringToBack duplication from TileLayer/Path
-	bringToFront: function () {
-		if (this._image) {
-			this._map._panes.overlayPane.appendChild(this._image);
-		}
-		return this;
-	},
-
-	bringToBack: function () {
-		var pane = this._map._panes.overlayPane;
-		if (this._image) {
-			pane.insertBefore(this._image, pane.firstChild);
-		}
-		return this;
-	},
-
-	setUrl: function (url) {
-		this._url = url;
-		this._image.src = this._url;
-	},
-
-	getAttribution: function () {
-		return this.options.attribution;
-	},
-
-	_initImage: function () {
-		this._image = L.DomUtil.create('img', 'leaflet-image-layer');
-
-		if (this._map.options.zoomAnimation && L.Browser.any3d) {
-			L.DomUtil.addClass(this._image, 'leaflet-zoom-animated');
-		} else {
-			L.DomUtil.addClass(this._image, 'leaflet-zoom-hide');
-		}
-
-		this._updateOpacity();
-
-		//TODO createImage util method to remove duplication
-		L.extend(this._image, {
-			galleryimg: 'no',
-			onselectstart: L.Util.falseFn,
-			onmousemove: L.Util.falseFn,
-			onload: L.bind(this._onImageLoad, this),
-			src: this._url
-		});
-	},
-
-	_animateZoom: function (e) {
-		var map = this._map,
-		    image = this._image,
-		    scale = map.getZoomScale(e.zoom),
-		    nw = this._bounds.getNorthWest(),
-		    se = this._bounds.getSouthEast(),
-
-		    topLeft = map._latLngToNewLayerPoint(nw, e.zoom, e.center),
-		    size = map._latLngToNewLayerPoint(se, e.zoom, e.center)._subtract(topLeft),
-		    origin = topLeft._add(size._multiplyBy((1 / 2) * (1 - 1 / scale)));
-
-		image.style[L.DomUtil.TRANSFORM] =
-		        L.DomUtil.getTranslateString(origin) + ' scale(' + scale + ') ';
-	},
-
-	_reset: function () {
-		var image   = this._image,
-		    topLeft = this._map.latLngToLayerPoint(this._bounds.getNorthWest()),
-		    size = this._map.latLngToLayerPoint(this._bounds.getSouthEast())._subtract(topLeft);
-
-		L.DomUtil.setPosition(image, topLeft);
-
-		image.style.width  = size.x + 'px';
-		image.style.height = size.y + 'px';
-	},
-
-	_onImageLoad: function () {
-		this.fire('load');
-	},
-
-	_updateOpacity: function () {
-		L.DomUtil.setOpacity(this._image, this.options.opacity);
-	}
-});
-
-L.imageOverlay = function (url, bounds, options) {
-	return new L.ImageOverlay(url, bounds, options);
-};
-
-
-/*
- * L.Icon is an image-based icon class that you can use with L.Marker for custom markers.
- */
-
-L.Icon = L.Class.extend({
-	options: {
-		/*
-		iconUrl: (String) (required)
-		iconRetinaUrl: (String) (optional, used for retina devices if detected)
-		iconSize: (Point) (can be set through CSS)
-		iconAnchor: (Point) (centered by default, can be set in CSS with negative margins)
-		popupAnchor: (Point) (if not specified, popup opens in the anchor point)
-		shadowUrl: (String) (no shadow by default)
-		shadowRetinaUrl: (String) (optional, used for retina devices if detected)
-		shadowSize: (Point)
-		shadowAnchor: (Point)
-		*/
-		className: ''
-	},
-
-	initialize: function (options) {
-		L.setOptions(this, options);
-	},
-
-	createIcon: function (oldIcon) {
-		return this._createIcon('icon', oldIcon);
-	},
-
-	createShadow: function (oldIcon) {
-		return this._createIcon('shadow', oldIcon);
-	},
-
-	_createIcon: function (name, oldIcon) {
-		var src = this._getIconUrl(name);
-
-		if (!src) {
-			if (name === 'icon') {
-				throw new Error('iconUrl not set in Icon options (see the docs).');
-			}
-			return null;
-		}
-
-		var img;
-		if (!oldIcon || oldIcon.tagName !== 'IMG') {
-			img = this._createImg(src);
-		} else {
-			img = this._createImg(src, oldIcon);
-		}
-		this._setIconStyles(img, name);
-
-		return img;
-	},
-
-	_setIconStyles: function (img, name) {
-		var options = this.options,
-		    size = L.point(options[name + 'Size']),
-		    anchor;
-
-		if (name === 'shadow') {
-			anchor = L.point(options.shadowAnchor || options.iconAnchor);
-		} else {
-			anchor = L.point(options.iconAnchor);
-		}
-
-		if (!anchor && size) {
-			anchor = size.divideBy(2, true);
-		}
-
-		img.className = 'leaflet-marker-' + name + ' ' + options.className;
-
-		if (anchor) {
-			img.style.marginLeft = (-anchor.x) + 'px';
-			img.style.marginTop  = (-anchor.y) + 'px';
-		}
-
-		if (size) {
-			img.style.width  = size.x + 'px';
-			img.style.height = size.y + 'px';
-		}
-	},
-
-	_createImg: function (src, el) {
-		el = el || document.createElement('img');
-		el.src = src;
-		return el;
-	},
-
-	_getIconUrl: function (name) {
-		if (L.Browser.retina && this.options[name + 'RetinaUrl']) {
-			return this.options[name + 'RetinaUrl'];
-		}
-		return this.options[name + 'Url'];
-	}
-});
-
-L.icon = function (options) {
-	return new L.Icon(options);
-};
-
-
-/*
- * L.Icon.Default is the blue marker icon used by default in Leaflet.
- */
-
-L.Icon.Default = L.Icon.extend({
-
-	options: {
-		iconSize: [25, 41],
-		iconAnchor: [12, 41],
-		popupAnchor: [1, -34],
-
-		shadowSize: [41, 41]
-	},
-
-	_getIconUrl: function (name) {
-		var key = name + 'Url';
-
-		if (this.options[key]) {
-			return this.options[key];
-		}
-
-		if (L.Browser.retina && name === 'icon') {
-			name += '-2x';
-		}
-
-		var path = L.Icon.Default.imagePath;
-
-		if (!path) {
-			throw new Error('Couldn\'t autodetect L.Icon.Default.imagePath, set it manually.');
-		}
-
-		return path + '/marker-' + name + '.png';
-	}
-});
-
-L.Icon.Default.imagePath = (function () {
-	var scripts = document.getElementsByTagName('script'),
-	    leafletRe = /[\/^]leaflet[\-\._]?([\w\-\._]*)\.js\??/;
-
-	var i, len, src, matches, path;
-
-	for (i = 0, len = scripts.length; i < len; i++) {
-		src = scripts[i].src;
-		matches = src.match(leafletRe);
-
-		if (matches) {
-			path = src.split(leafletRe)[0];
-			return (path ? path + '/' : '') + 'images';
-		}
-	}
-}());
-
-
-/*
- * L.Marker is used to display clickable/draggable icons on the map.
- */
-
-L.Marker = L.Class.extend({
-
-	includes: L.Mixin.Events,
-
-	options: {
-		icon: new L.Icon.Default(),
-		title: '',
-		alt: '',
-		clickable: true,
-		draggable: false,
-		keyboard: true,
-		zIndexOffset: 0,
-		opacity: 1,
-		riseOnHover: false,
-		riseOffset: 250
-	},
-
-	initialize: function (latlng, options) {
-		L.setOptions(this, options);
-		this._latlng = L.latLng(latlng);
-	},
-
-	onAdd: function (map) {
-		this._map = map;
-
-		map.on('viewreset', this.update, this);
-
-		this._initIcon();
-		this.update();
-		this.fire('add');
-
-		if (map.options.zoomAnimation && map.options.markerZoomAnimation) {
-			map.on('zoomanim', this._animateZoom, this);
-		}
-	},
-
-	addTo: function (map) {
-		map.addLayer(this);
-		return this;
-	},
-
-	onRemove: function (map) {
-		if (this.dragging) {
-			this.dragging.disable();
-		}
-
-		this._removeIcon();
-		this._removeShadow();
-
-		this.fire('remove');
-
-		map.off({
-			'viewreset': this.update,
-			'zoomanim': this._animateZoom
-		}, this);
-
-		this._map = null;
-	},
-
-	getLatLng: function () {
-		return this._latlng;
-	},
-
-	setLatLng: function (latlng) {
-		this._latlng = L.latLng(latlng);
-
-		this.update();
-
-		return this.fire('move', { latlng: this._latlng });
-	},
-
-	setZIndexOffset: function (offset) {
-		this.options.zIndexOffset = offset;
-		this.update();
-
-		return this;
-	},
-
-	setIcon: function (icon) {
-
-		this.options.icon = icon;
-
-		if (this._map) {
-			this._initIcon();
-			this.update();
-		}
-
-		if (this._popup) {
-			this.bindPopup(this._popup);
-		}
-
-		return this;
-	},
-
-	update: function () {
-		if (this._icon) {
-			var pos = this._map.latLngToLayerPoint(this._latlng).round();
-			this._setPos(pos);
-		}
-
-		return this;
-	},
-
-	_initIcon: function () {
-		var options = this.options,
-		    map = this._map,
-		    animation = (map.options.zoomAnimation && map.options.markerZoomAnimation),
-		    classToAdd = animation ? 'leaflet-zoom-animated' : 'leaflet-zoom-hide';
-
-		var icon = options.icon.createIcon(this._icon),
-			addIcon = false;
-
-		// if we're not reusing the icon, remove the old one and init new one
-		if (icon !== this._icon) {
-			if (this._icon) {
-				this._removeIcon();
-			}
-			addIcon = true;
-
-			if (options.title) {
-				icon.title = options.title;
-			}
-			
-			if (options.alt) {
-				icon.alt = options.alt;
-			}
-		}
-
-		L.DomUtil.addClass(icon, classToAdd);
-
-		if (options.keyboard) {
-			icon.tabIndex = '0';
-		}
-
-		this._icon = icon;
-
-		this._initInteraction();
-
-		if (options.riseOnHover) {
-			L.DomEvent
-				.on(icon, 'mouseover', this._bringToFront, this)
-				.on(icon, 'mouseout', this._resetZIndex, this);
-		}
-
-		var newShadow = options.icon.createShadow(this._shadow),
-			addShadow = false;
-
-		if (newShadow !== this._shadow) {
-			this._removeShadow();
-			addShadow = true;
-		}
-
-		if (newShadow) {
-			L.DomUtil.addClass(newShadow, classToAdd);
-		}
-		this._shadow = newShadow;
-
-
-		if (options.opacity < 1) {
-			this._updateOpacity();
-		}
-
-
-		var panes = this._map._panes;
-
-		if (addIcon) {
-			panes.markerPane.appendChild(this._icon);
-		}
-
-		if (newShadow && addShadow) {
-			panes.shadowPane.appendChild(this._shadow);
-		}
-	},
-
-	_removeIcon: function () {
-		if (this.options.riseOnHover) {
-			L.DomEvent
-			    .off(this._icon, 'mouseover', this._bringToFront)
-			    .off(this._icon, 'mouseout', this._resetZIndex);
-		}
-
-		this._map._panes.markerPane.removeChild(this._icon);
-
-		this._icon = null;
-	},
-
-	_removeShadow: function () {
-		if (this._shadow) {
-			this._map._panes.shadowPane.removeChild(this._shadow);
-		}
-		this._shadow = null;
-	},
-
-	_setPos: function (pos) {
-		L.DomUtil.setPosition(this._icon, pos);
-
-		if (this._shadow) {
-			L.DomUtil.setPosition(this._shadow, pos);
-		}
-
-		this._zIndex = pos.y + this.options.zIndexOffset;
-
-		this._resetZIndex();
-	},
-
-	_updateZIndex: function (offset) {
-		this._icon.style.zIndex = this._zIndex + offset;
-	},
-
-	_animateZoom: function (opt) {
-		var pos = this._map._latLngToNewLayerPoint(this._latlng, opt.zoom, opt.center).round();
-
-		this._setPos(pos);
-	},
-
-	_initInteraction: function () {
-
-		if (!this.options.clickable) { return; }
-
-		// TODO refactor into something shared with Map/Path/etc. to DRY it up
-
-		var icon = this._icon,
-		    events = ['dblclick', 'mousedown', 'mouseover', 'mouseout', 'contextmenu'];
-
-		L.DomUtil.addClass(icon, 'leaflet-clickable');
-		L.DomEvent.on(icon, 'click', this._onMouseClick, this);
-		L.DomEvent.on(icon, 'keypress', this._onKeyPress, this);
-
-		for (var i = 0; i < events.length; i++) {
-			L.DomEvent.on(icon, events[i], this._fireMouseEvent, this);
-		}
-
-		if (L.Handler.MarkerDrag) {
-			this.dragging = new L.Handler.MarkerDrag(this);
-
-			if (this.options.draggable) {
-				this.dragging.enable();
-			}
-		}
-	},
-
-	_onMouseClick: function (e) {
-		var wasDragged = this.dragging && this.dragging.moved();
-
-		if (this.hasEventListeners(e.type) || wasDragged) {
-			L.DomEvent.stopPropagation(e);
-		}
-
-		if (wasDragged) { return; }
-
-		if ((!this.dragging || !this.dragging._enabled) && this._map.dragging && this._map.dragging.moved()) { return; }
-
-		this.fire(e.type, {
-			originalEvent: e,
-			latlng: this._latlng
-		});
-	},
-
-	_onKeyPress: function (e) {
-		if (e.keyCode === 13) {
-			this.fire('click', {
-				originalEvent: e,
-				latlng: this._latlng
-			});
-		}
-	},
-
-	_fireMouseEvent: function (e) {
-
-		this.fire(e.type, {
-			originalEvent: e,
-			latlng: this._latlng
-		});
-
-		// TODO proper custom event propagation
-		// this line will always be called if marker is in a FeatureGroup
-		if (e.type === 'contextmenu' && this.hasEventListeners(e.type)) {
-			L.DomEvent.preventDefault(e);
-		}
-		if (e.type !== 'mousedown') {
-			L.DomEvent.stopPropagation(e);
-		} else {
-			L.DomEvent.preventDefault(e);
-		}
-	},
-
-	setOpacity: function (opacity) {
-		this.options.opacity = opacity;
-		if (this._map) {
-			this._updateOpacity();
-		}
-
-		return this;
-	},
-
-	_updateOpacity: function () {
-		L.DomUtil.setOpacity(this._icon, this.options.opacity);
-		if (this._shadow) {
-			L.DomUtil.setOpacity(this._shadow, this.options.opacity);
-		}
-	},
-
-	_bringToFront: function () {
-		this._updateZIndex(this.options.riseOffset);
-	},
-
-	_resetZIndex: function () {
-		this._updateZIndex(0);
-	}
-});
-
-L.marker = function (latlng, options) {
-	return new L.Marker(latlng, options);
-};
-
-
-/*
- * L.DivIcon is a lightweight HTML-based icon class (as opposed to the image-based L.Icon)
- * to use with L.Marker.
- */
-
-L.DivIcon = L.Icon.extend({
-	options: {
-		iconSize: [12, 12], // also can be set through CSS
-		/*
-		iconAnchor: (Point)
-		popupAnchor: (Point)
-		html: (String)
-		bgPos: (Point)
-		*/
-		className: 'leaflet-div-icon',
-		html: false
-	},
-
-	createIcon: function (oldIcon) {
-		var div = (oldIcon && oldIcon.tagName === 'DIV') ? oldIcon : document.createElement('div'),
-		    options = this.options;
-
-		if (options.html !== false) {
-			div.innerHTML = options.html;
-		} else {
-			div.innerHTML = '';
-		}
-
-		if (options.bgPos) {
-			div.style.backgroundPosition =
-			        (-options.bgPos.x) + 'px ' + (-options.bgPos.y) + 'px';
-		}
-
-		this._setIconStyles(div, 'icon');
-		return div;
-	},
-
-	createShadow: function () {
-		return null;
-	}
-});
-
-L.divIcon = function (options) {
-	return new L.DivIcon(options);
-};
-
-
-/*
- * L.Popup is used for displaying popups on the map.
- */
-
-L.Map.mergeOptions({
-	closePopupOnClick: true
-});
-
-L.Popup = L.Class.extend({
-	includes: L.Mixin.Events,
-
-	options: {
-		minWidth: 50,
-		maxWidth: 300,
-		// maxHeight: null,
-		autoPan: true,
-		closeButton: true,
-		offset: [0, 7],
-		autoPanPadding: [5, 5],
-		// autoPanPaddingTopLeft: null,
-		// autoPanPaddingBottomRight: null,
-		keepInView: false,
-		className: '',
-		zoomAnimation: true
-	},
-
-	initialize: function (options, source) {
-		L.setOptions(this, options);
-
-		this._source = source;
-		this._animated = L.Browser.any3d && this.options.zoomAnimation;
-		this._isOpen = false;
-	},
-
-	onAdd: function (map) {
-		this._map = map;
-
-		if (!this._container) {
-			this._initLayout();
-		}
-
-		var animFade = map.options.fadeAnimation;
-
-		if (animFade) {
-			L.DomUtil.setOpacity(this._container, 0);
-		}
-		map._panes.popupPane.appendChild(this._container);
-
-		map.on(this._getEvents(), this);
-
-		this.update();
-
-		if (animFade) {
-			L.DomUtil.setOpacity(this._container, 1);
-		}
-
-		this.fire('open');
-
-		map.fire('popupopen', {popup: this});
-
-		if (this._source) {
-			this._source.fire('popupopen', {popup: this});
-		}
-	},
-
-	addTo: function (map) {
-		map.addLayer(this);
-		return this;
-	},
-
-	openOn: function (map) {
-		map.openPopup(this);
-		return this;
-	},
-
-	onRemove: function (map) {
-		map._panes.popupPane.removeChild(this._container);
-
-		L.Util.falseFn(this._container.offsetWidth); // force reflow
-
-		map.off(this._getEvents(), this);
-
-		if (map.options.fadeAnimation) {
-			L.DomUtil.setOpacity(this._container, 0);
-		}
-
-		this._map = null;
-
-		this.fire('close');
-
-		map.fire('popupclose', {popup: this});
-
-		if (this._source) {
-			this._source.fire('popupclose', {popup: this});
-		}
-	},
-
-	getLatLng: function () {
-		return this._latlng;
-	},
-
-	setLatLng: function (latlng) {
-		this._latlng = L.latLng(latlng);
-		if (this._map) {
-			this._updatePosition();
-			this._adjustPan();
-		}
-		return this;
-	},
-
-	getContent: function () {
-		return this._content;
-	},
-
-	setContent: function (content) {
-		this._content = content;
-		this.update();
-		return this;
-	},
-
-	update: function () {
-		if (!this._map) { return; }
-
-		this._container.style.visibility = 'hidden';
-
-		this._updateContent();
-		this._updateLayout();
-		this._updatePosition();
-
-		this._container.style.visibility = '';
-
-		this._adjustPan();
-	},
-
-	_getEvents: function () {
-		var events = {
-			viewreset: this._updatePosition
-		};
-
-		if (this._animated) {
-			events.zoomanim = this._zoomAnimation;
-		}
-		if ('closeOnClick' in this.options ? this.options.closeOnClick : this._map.options.closePopupOnClick) {
-			events.preclick = this._close;
-		}
-		if (this.options.keepInView) {
-			events.moveend = this._adjustPan;
-		}
-
-		return events;
-	},
-
-	_close: function () {
-		if (this._map) {
-			this._map.closePopup(this);
-		}
-	},
-
-	_initLayout: function () {
-		var prefix = 'leaflet-popup',
-			containerClass = prefix + ' ' + this.options.className + ' leaflet-zoom-' +
-			        (this._animated ? 'animated' : 'hide'),
-			container = this._container = L.DomUtil.create('div', containerClass),
-			closeButton;
-
-		if (this.options.closeButton) {
-			closeButton = this._closeButton =
-			        L.DomUtil.create('a', prefix + '-close-button', container);
-			closeButton.href = '#close';
-			closeButton.innerHTML = '&#215;';
-			L.DomEvent.disableClickPropagation(closeButton);
-
-			L.DomEvent.on(closeButton, 'click', this._onCloseButtonClick, this);
-		}
-
-		var wrapper = this._wrapper =
-		        L.DomUtil.create('div', prefix + '-content-wrapper', container);
-		L.DomEvent.disableClickPropagation(wrapper);
-
-		this._contentNode = L.DomUtil.create('div', prefix + '-content', wrapper);
-
-		L.DomEvent.disableScrollPropagation(this._contentNode);
-		L.DomEvent.on(wrapper, 'contextmenu', L.DomEvent.stopPropagation);
-
-		this._tipContainer = L.DomUtil.create('div', prefix + '-tip-container', container);
-		this._tip = L.DomUtil.create('div', prefix + '-tip', this._tipContainer);
-	},
-
-	_updateContent: function () {
-		if (!this._content) { return; }
-
-		if (typeof this._content === 'string') {
-			this._contentNode.innerHTML = this._content;
-		} else {
-			while (this._contentNode.hasChildNodes()) {
-				this._contentNode.removeChild(this._contentNode.firstChild);
-			}
-			this._contentNode.appendChild(this._content);
-		}
-		this.fire('contentupdate');
-	},
-
-	_updateLayout: function () {
-		var container = this._contentNode,
-		    style = container.style;
-
-		style.width = '';
-		style.whiteSpace = 'nowrap';
-
-		var width = container.offsetWidth;
-		width = Math.min(width, this.options.maxWidth);
-		width = Math.max(width, this.options.minWidth);
-
-		style.width = (width + 1) + 'px';
-		style.whiteSpace = '';
-
-		style.height = '';
-
-		var height = container.offsetHeight,
-		    maxHeight = this.options.maxHeight,
-		    scrolledClass = 'leaflet-popup-scrolled';
-
-		if (maxHeight && height > maxHeight) {
-			style.height = maxHeight + 'px';
-			L.DomUtil.addClass(container, scrolledClass);
-		} else {
-			L.DomUtil.removeClass(container, scrolledClass);
-		}
-
-		this._containerWidth = this._container.offsetWidth;
-	},
-
-	_updatePosition: function () {
-		if (!this._map) { return; }
-
-		var pos = this._map.latLngToLayerPoint(this._latlng),
-		    animated = this._animated,
-		    offset = L.point(this.options.offset);
-
-		if (animated) {
-			L.DomUtil.setPosition(this._container, pos);
-		}
-
-		this._containerBottom = -offset.y - (animated ? 0 : pos.y);
-		this._containerLeft = -Math.round(this._containerWidth / 2) + offset.x + (animated ? 0 : pos.x);
-
-		// bottom position the popup in case the height of the popup changes (images loading etc)
-		this._container.style.bottom = this._containerBottom + 'px';
-		this._container.style.left = this._containerLeft + 'px';
-	},
-
-	_zoomAnimation: function (opt) {
-		var pos = this._map._latLngToNewLayerPoint(this._latlng, opt.zoom, opt.center);
-
-		L.DomUtil.setPosition(this._container, pos);
-	},
-
-	_adjustPan: function () {
-		if (!this.options.autoPan) { return; }
-
-		var map = this._map,
-		    containerHeight = this._container.offsetHeight,
-		    containerWidth = this._containerWidth,
-
-		    layerPos = new L.Point(this._containerLeft, -containerHeight - this._containerBottom);
-
-		if (this._animated) {
-			layerPos._add(L.DomUtil.getPosition(this._container));
-		}
-
-		var containerPos = map.layerPointToContainerPoint(layerPos),
-		    padding = L.point(this.options.autoPanPadding),
-		    paddingTL = L.point(this.options.autoPanPaddingTopLeft || padding),
-		    paddingBR = L.point(this.options.autoPanPaddingBottomRight || padding),
-		    size = map.getSize(),
-		    dx = 0,
-		    dy = 0;
-
-		if (containerPos.x + containerWidth + paddingBR.x > size.x) { // right
-			dx = containerPos.x + containerWidth - size.x + paddingBR.x;
-		}
-		if (containerPos.x - dx - paddingTL.x < 0) { // left
-			dx = containerPos.x - paddingTL.x;
-		}
-		if (containerPos.y + containerHeight + paddingBR.y > size.y) { // bottom
-			dy = containerPos.y + containerHeight - size.y + paddingBR.y;
-		}
-		if (containerPos.y - dy - paddingTL.y < 0) { // top
-			dy = containerPos.y - paddingTL.y;
-		}
-
-		if (dx || dy) {
-			map
-			    .fire('autopanstart')
-			    .panBy([dx, dy]);
-		}
-	},
-
-	_onCloseButtonClick: function (e) {
-		this._close();
-		L.DomEvent.stop(e);
-	}
-});
-
-L.popup = function (options, source) {
-	return new L.Popup(options, source);
-};
-
-
-L.Map.include({
-	openPopup: function (popup, latlng, options) { // (Popup) or (String || HTMLElement, LatLng[, Object])
-		this.closePopup();
-
-		if (!(popup instanceof L.Popup)) {
-			var content = popup;
-
-			popup = new L.Popup(options)
-			    .setLatLng(latlng)
-			    .setContent(content);
-		}
-		popup._isOpen = true;
-
-		this._popup = popup;
-		return this.addLayer(popup);
-	},
-
-	closePopup: function (popup) {
-		if (!popup || popup === this._popup) {
-			popup = this._popup;
-			this._popup = null;
-		}
-		if (popup) {
-			this.removeLayer(popup);
-			popup._isOpen = false;
-		}
-		return this;
-	}
-});
-
-
-/*
- * Popup extension to L.Marker, adding popup-related methods.
- */
-
-L.Marker.include({
-	openPopup: function () {
-		if (this._popup && this._map && !this._map.hasLayer(this._popup)) {
-			this._popup.setLatLng(this._latlng);
-			this._map.openPopup(this._popup);
-		}
-
-		return this;
-	},
-
-	closePopup: function () {
-		if (this._popup) {
-			this._popup._close();
-		}
-		return this;
-	},
-
-	togglePopup: function () {
-		if (this._popup) {
-			if (this._popup._isOpen) {
-				this.closePopup();
-			} else {
-				this.openPopup();
-			}
-		}
-		return this;
-	},
-
-	bindPopup: function (content, options) {
-		var anchor = L.point(this.options.icon.options.popupAnchor || [0, 0]);
-
-		anchor = anchor.add(L.Popup.prototype.options.offset);
-
-		if (options && options.offset) {
-			anchor = anchor.add(options.offset);
-		}
-
-		options = L.extend({offset: anchor}, options);
-
-		if (!this._popupHandlersAdded) {
-			this
-			    .on('click', this.togglePopup, this)
-			    .on('remove', this.closePopup, this)
-			    .on('move', this._movePopup, this);
-			this._popupHandlersAdded = true;
-		}
-
-		if (content instanceof L.Popup) {
-			L.setOptions(content, options);
-			this._popup = content;
-		} else {
-			this._popup = new L.Popup(options, this)
-				.setContent(content);
-		}
-
-		return this;
-	},
-
-	setPopupContent: function (content) {
-		if (this._popup) {
-			this._popup.setContent(content);
-		}
-		return this;
-	},
-
-	unbindPopup: function () {
-		if (this._popup) {
-			this._popup = null;
-			this
-			    .off('click', this.togglePopup, this)
-			    .off('remove', this.closePopup, this)
-			    .off('move', this._movePopup, this);
-			this._popupHandlersAdded = false;
-		}
-		return this;
-	},
-
-	getPopup: function () {
-		return this._popup;
-	},
-
-	_movePopup: function (e) {
-		this._popup.setLatLng(e.latlng);
-	}
-});
-
-
-/*
- * L.LayerGroup is a class to combine several layers into one so that
- * you can manipulate the group (e.g. add/remove it) as one layer.
- */
-
-L.LayerGroup = L.Class.extend({
-	initialize: function (layers) {
-		this._layers = {};
-
-		var i, len;
-
-		if (layers) {
-			for (i = 0, len = layers.length; i < len; i++) {
-				this.addLayer(layers[i]);
-			}
-		}
-	},
-
-	addLayer: function (layer) {
-		var id = this.getLayerId(layer);
-
-		this._layers[id] = layer;
-
-		if (this._map) {
-			this._map.addLayer(layer);
-		}
-
-		return this;
-	},
-
-	removeLayer: function (layer) {
-		var id = layer in this._layers ? layer : this.getLayerId(layer);
-
-		if (this._map && this._layers[id]) {
-			this._map.removeLayer(this._layers[id]);
-		}
-
-		delete this._layers[id];
-
-		return this;
-	},
-
-	hasLayer: function (layer) {
-		if (!layer) { return false; }
-
-		return (layer in this._layers || this.getLayerId(layer) in this._layers);
-	},
-
-	clearLayers: function () {
-		this.eachLayer(this.removeLayer, this);
-		return this;
-	},
-
-	invoke: function (methodName) {
-		var args = Array.prototype.slice.call(arguments, 1),
-		    i, layer;
-
-		for (i in this._layers) {
-			layer = this._layers[i];
-
-			if (layer[methodName]) {
-				layer[methodName].apply(layer, args);
-			}
-		}
-
-		return this;
-	},
-
-	onAdd: function (map) {
-		this._map = map;
-		this.eachLayer(map.addLayer, map);
-	},
-
-	onRemove: function (map) {
-		this.eachLayer(map.removeLayer, map);
-		this._map = null;
-	},
-
-	addTo: function (map) {
-		map.addLayer(this);
-		return this;
-	},
-
-	eachLayer: function (method, context) {
-		for (var i in this._layers) {
-			method.call(context, this._layers[i]);
-		}
-		return this;
-	},
-
-	getLayer: function (id) {
-		return this._layers[id];
-	},
-
-	getLayers: function () {
-		var layers = [];
-
-		for (var i in this._layers) {
-			layers.push(this._layers[i]);
-		}
-		return layers;
-	},
-
-	setZIndex: function (zIndex) {
-		return this.invoke('setZIndex', zIndex);
-	},
-
-	getLayerId: function (layer) {
-		return L.stamp(layer);
-	}
-});
-
-L.layerGroup = function (layers) {
-	return new L.LayerGroup(layers);
-};
-
-
-/*
- * L.FeatureGroup extends L.LayerGroup by introducing mouse events and additional methods
- * shared between a group of interactive layers (like vectors or markers).
- */
-
-L.FeatureGroup = L.LayerGroup.extend({
-	includes: L.Mixin.Events,
-
-	statics: {
-		EVENTS: 'click dblclick mouseover mouseout mousemove contextmenu popupopen popupclose'
-	},
-
-	addLayer: function (layer) {
-		if (this.hasLayer(layer)) {
-			return this;
-		}
-
-		if ('on' in layer) {
-			layer.on(L.FeatureGroup.EVENTS, this._propagateEvent, this);
-		}
-
-		L.LayerGroup.prototype.addLayer.call(this, layer);
-
-		if (this._popupContent && layer.bindPopup) {
-			layer.bindPopup(this._popupContent, this._popupOptions);
-		}
-
-		return this.fire('layeradd', {layer: layer});
-	},
-
-	removeLayer: function (layer) {
-		if (!this.hasLayer(layer)) {
-			return this;
-		}
-		if (layer in this._layers) {
-			layer = this._layers[layer];
-		}
-
-		layer.off(L.FeatureGroup.EVENTS, this._propagateEvent, this);
-
-		L.LayerGroup.prototype.removeLayer.call(this, layer);
-
-		if (this._popupContent) {
-			this.invoke('unbindPopup');
-		}
-
-		return this.fire('layerremove', {layer: layer});
-	},
-
-	bindPopup: function (content, options) {
-		this._popupContent = content;
-		this._popupOptions = options;
-		return this.invoke('bindPopup', content, options);
-	},
-
-	openPopup: function (latlng) {
-		// open popup on the first layer
-		for (var id in this._layers) {
-			this._layers[id].openPopup(latlng);
-			break;
-		}
-		return this;
-	},
-
-	setStyle: function (style) {
-		return this.invoke('setStyle', style);
-	},
-
-	bringToFront: function () {
-		return this.invoke('bringToFront');
-	},
-
-	bringToBack: function () {
-		return this.invoke('bringToBack');
-	},
-
-	getBounds: function () {
-		var bounds = new L.LatLngBounds();
-
-		this.eachLayer(function (layer) {
-			bounds.extend(layer instanceof L.Marker ? layer.getLatLng() : layer.getBounds());
-		});
-
-		return bounds;
-	},
-
-	_propagateEvent: function (e) {
-		e = L.extend({
-			layer: e.target,
-			target: this
-		}, e);
-		this.fire(e.type, e);
-	}
-});
-
-L.featureGroup = function (layers) {
-	return new L.FeatureGroup(layers);
-};
-
-
-/*
- * L.Path is a base class for rendering vector paths on a map. Inherited by Polyline, Circle, etc.
- */
-
-L.Path = L.Class.extend({
-	includes: [L.Mixin.Events],
-
-	statics: {
-		// how much to extend the clip area around the map view
-		// (relative to its size, e.g. 0.5 is half the screen in each direction)
-		// set it so that SVG element doesn't exceed 1280px (vectors flicker on dragend if it is)
-		CLIP_PADDING: (function () {
-			var max = L.Browser.mobile ? 1280 : 2000,
-			    target = (max / Math.max(window.outerWidth, window.outerHeight) - 1) / 2;
-			return Math.max(0, Math.min(0.5, target));
-		})()
-	},
-
-	options: {
-		stroke: true,
-		color: '#0033ff',
-		dashArray: null,
-		lineCap: null,
-		lineJoin: null,
-		weight: 5,
-		opacity: 0.5,
-
-		fill: false,
-		fillColor: null, //same as color by default
-		fillOpacity: 0.2,
-
-		clickable: true
-	},
-
-	initialize: function (options) {
-		L.setOptions(this, options);
-	},
-
-	onAdd: function (map) {
-		this._map = map;
-
-		if (!this._container) {
-			this._initElements();
-			this._initEvents();
-		}
-
-		this.projectLatlngs();
-		this._updatePath();
-
-		if (this._container) {
-			this._map._pathRoot.appendChild(this._container);
-		}
-
-		this.fire('add');
-
-		map.on({
-			'viewreset': this.projectLatlngs,
-			'moveend': this._updatePath
-		}, this);
-	},
-
-	addTo: function (map) {
-		map.addLayer(this);
-		return this;
-	},
-
-	onRemove: function (map) {
-		map._pathRoot.removeChild(this._container);
-
-		// Need to fire remove event before we set _map to null as the event hooks might need the object
-		this.fire('remove');
-		this._map = null;
-
-		if (L.Browser.vml) {
-			this._container = null;
-			this._stroke = null;
-			this._fill = null;
-		}
-
-		map.off({
-			'viewreset': this.projectLatlngs,
-			'moveend': this._updatePath
-		}, this);
-	},
-
-	projectLatlngs: function () {
-		// do all projection stuff here
-	},
-
-	setStyle: function (style) {
-		L.setOptions(this, style);
-
-		if (this._container) {
-			this._updateStyle();
-		}
-
-		return this;
-	},
-
-	redraw: function () {
-		if (this._map) {
-			this.projectLatlngs();
-			this._updatePath();
-		}
-		return this;
-	}
-});
-
-L.Map.include({
-	_updatePathViewport: function () {
-		var p = L.Path.CLIP_PADDING,
-		    size = this.getSize(),
-		    panePos = L.DomUtil.getPosition(this._mapPane),
-		    min = panePos.multiplyBy(-1)._subtract(size.multiplyBy(p)._round()),
-		    max = min.add(size.multiplyBy(1 + p * 2)._round());
-
-		this._pathViewport = new L.Bounds(min, max);
-	}
-});
-
-
-/*
- * Extends L.Path with SVG-specific rendering code.
- */
-
-L.Path.SVG_NS = 'http://www.w3.org/2000/svg';
-
-L.Browser.svg = !!(document.createElementNS && document.createElementNS(L.Path.SVG_NS, 'svg').createSVGRect);
-
-L.Path = L.Path.extend({
-	statics: {
-		SVG: L.Browser.svg
-	},
-
-	bringToFront: function () {
-		var root = this._map._pathRoot,
-		    path = this._container;
-
-		if (path && root.lastChild !== path) {
-			root.appendChild(path);
-		}
-		return this;
-	},
-
-	bringToBack: function () {
-		var root = this._map._pathRoot,
-		    path = this._container,
-		    first = root.firstChild;
-
-		if (path && first !== path) {
-			root.insertBefore(path, first);
-		}
-		return this;
-	},
-
-	getPathString: function () {
-		// form path string here
-	},
-
-	_createElement: function (name) {
-		return document.createElementNS(L.Path.SVG_NS, name);
-	},
-
-	_initElements: function () {
-		this._map._initPathRoot();
-		this._initPath();
-		this._initStyle();
-	},
-
-	_initPath: function () {
-		this._container = this._createElement('g');
-
-		this._path = this._createElement('path');
-
-		if (this.options.className) {
-			L.DomUtil.addClass(this._path, this.options.className);
-		}
-
-		this._container.appendChild(this._path);
-	},
-
-	_initStyle: function () {
-		if (this.options.stroke) {
-			this._path.setAttribute('stroke-linejoin', 'round');
-			this._path.setAttribute('stroke-linecap', 'round');
-		}
-		if (this.options.fill) {
-			this._path.setAttribute('fill-rule', 'evenodd');
-		}
-		if (this.options.pointerEvents) {
-			this._path.setAttribute('pointer-events', this.options.pointerEvents);
-		}
-		if (!this.options.clickable && !this.options.pointerEvents) {
-			this._path.setAttribute('pointer-events', 'none');
-		}
-		this._updateStyle();
-	},
-
-	_updateStyle: function () {
-		if (this.options.stroke) {
-			this._path.setAttribute('stroke', this.options.color);
-			this._path.setAttribute('stroke-opacity', this.options.opacity);
-			this._path.setAttribute('stroke-width', this.options.weight);
-			if (this.options.dashArray) {
-				this._path.setAttribute('stroke-dasharray', this.options.dashArray);
-			} else {
-				this._path.removeAttribute('stroke-dasharray');
-			}
-			if (this.options.lineCap) {
-				this._path.setAttribute('stroke-linecap', this.options.lineCap);
-			}
-			if (this.options.lineJoin) {
-				this._path.setAttribute('stroke-linejoin', this.options.lineJoin);
-			}
-		} else {
-			this._path.setAttribute('stroke', 'none');
-		}
-		if (this.options.fill) {
-			this._path.setAttribute('fill', this.options.fillColor || this.options.color);
-			this._path.setAttribute('fill-opacity', this.options.fillOpacity);
-		} else {
-			this._path.setAttribute('fill', 'none');
-		}
-	},
-
-	_updatePath: function () {
-		var str = this.getPathString();
-		if (!str) {
-			// fix webkit empty string parsing bug
-			str = 'M0 0';
-		}
-		this._path.setAttribute('d', str);
-	},
-
-	// TODO remove duplication with L.Map
-	_initEvents: function () {
-		if (this.options.clickable) {
-			if (L.Browser.svg || !L.Browser.vml) {
-				L.DomUtil.addClass(this._path, 'leaflet-clickable');
-			}
-
-			L.DomEvent.on(this._container, 'click', this._onMouseClick, this);
-
-			var events = ['dblclick', 'mousedown', 'mouseover',
-			              'mouseout', 'mousemove', 'contextmenu'];
-			for (var i = 0; i < events.length; i++) {
-				L.DomEvent.on(this._container, events[i], this._fireMouseEvent, this);
-			}
-		}
-	},
-
-	_onMouseClick: function (e) {
-		if (this._map.dragging && this._map.dragging.moved()) { return; }
-
-		this._fireMouseEvent(e);
-	},
-
-	_fireMouseEvent: function (e) {
-		if (!this.hasEventListeners(e.type)) { return; }
-
-		var map = this._map,
-		    containerPoint = map.mouseEventToContainerPoint(e),
-		    layerPoint = map.containerPointToLayerPoint(containerPoint),
-		    latlng = map.layerPointToLatLng(layerPoint);
-
-		this.fire(e.type, {
-			latlng: latlng,
-			layerPoint: layerPoint,
-			containerPoint: containerPoint,
-			originalEvent: e
-		});
-
-		if (e.type === 'contextmenu') {
-			L.DomEvent.preventDefault(e);
-		}
-		if (e.type !== 'mousemove') {
-			L.DomEvent.stopPropagation(e);
-		}
-	}
-});
-
-L.Map.include({
-	_initPathRoot: function () {
-		if (!this._pathRoot) {
-			this._pathRoot = L.Path.prototype._createElement('svg');
-			this._panes.overlayPane.appendChild(this._pathRoot);
-
-			if (this.options.zoomAnimation && L.Browser.any3d) {
-				L.DomUtil.addClass(this._pathRoot, 'leaflet-zoom-animated');
-
-				this.on({
-					'zoomanim': this._animatePathZoom,
-					'zoomend': this._endPathZoom
-				});
-			} else {
-				L.DomUtil.addClass(this._pathRoot, 'leaflet-zoom-hide');
-			}
-
-			this.on('moveend', this._updateSvgViewport);
-			this._updateSvgViewport();
-		}
-	},
-
-	_animatePathZoom: function (e) {
-		var scale = this.getZoomScale(e.zoom),
-		    offset = this._getCenterOffset(e.center)._multiplyBy(-scale)._add(this._pathViewport.min);
-
-		this._pathRoot.style[L.DomUtil.TRANSFORM] =
-		        L.DomUtil.getTranslateString(offset) + ' scale(' + scale + ') ';
-
-		this._pathZooming = true;
-	},
-
-	_endPathZoom: function () {
-		this._pathZooming = false;
-	},
-
-	_updateSvgViewport: function () {
-
-		if (this._pathZooming) {
-			// Do not update SVGs while a zoom animation is going on otherwise the animation will break.
-			// When the zoom animation ends we will be updated again anyway
-			// This fixes the case where you do a momentum move and zoom while the move is still ongoing.
-			return;
-		}
-
-		this._updatePathViewport();
-
-		var vp = this._pathViewport,
-		    min = vp.min,
-		    max = vp.max,
-		    width = max.x - min.x,
-		    height = max.y - min.y,
-		    root = this._pathRoot,
-		    pane = this._panes.overlayPane;
-
-		// Hack to make flicker on drag end on mobile webkit less irritating
-		if (L.Browser.mobileWebkit) {
-			pane.removeChild(root);
-		}
-
-		L.DomUtil.setPosition(root, min);
-		root.setAttribute('width', width);
-		root.setAttribute('height', height);
-		root.setAttribute('viewBox', [min.x, min.y, width, height].join(' '));
-
-		if (L.Browser.mobileWebkit) {
-			pane.appendChild(root);
-		}
-	}
-});
-
-
-/*
- * Popup extension to L.Path (polylines, polygons, circles), adding popup-related methods.
- */
-
-L.Path.include({
-
-	bindPopup: function (content, options) {
-
-		if (content instanceof L.Popup) {
-			this._popup = content;
-		} else {
-			if (!this._popup || options) {
-				this._popup = new L.Popup(options, this);
-			}
-			this._popup.setContent(content);
-		}
-
-		if (!this._popupHandlersAdded) {
-			this
-			    .on('click', this._openPopup, this)
-			    .on('remove', this.closePopup, this);
-
-			this._popupHandlersAdded = true;
-		}
-
-		return this;
-	},
-
-	unbindPopup: function () {
-		if (this._popup) {
-			this._popup = null;
-			this
-			    .off('click', this._openPopup)
-			    .off('remove', this.closePopup);
-
-			this._popupHandlersAdded = false;
-		}
-		return this;
-	},
-
-	openPopup: function (latlng) {
-
-		if (this._popup) {
-			// open the popup from one of the path's points if not specified
-			latlng = latlng || this._latlng ||
-			         this._latlngs[Math.floor(this._latlngs.length / 2)];
-
-			this._openPopup({latlng: latlng});
-		}
-
-		return this;
-	},
-
-	closePopup: function () {
-		if (this._popup) {
-			this._popup._close();
-		}
-		return this;
-	},
-
-	_openPopup: function (e) {
-		this._popup.setLatLng(e.latlng);
-		this._map.openPopup(this._popup);
-	}
-});
-
-
-/*
- * Vector rendering for IE6-8 through VML.
- * Thanks to Dmitry Baranovsky and his Raphael library for inspiration!
- */
-
-L.Browser.vml = !L.Browser.svg && (function () {
-	try {
-		var div = document.createElement('div');
-		div.innerHTML = '<v:shape adj="1"/>';
-
-		var shape = div.firstChild;
-		shape.style.behavior = 'url(#default#VML)';
-
-		return shape && (typeof shape.adj === 'object');
-
-	} catch (e) {
-		return false;
-	}
-}());
-
-L.Path = L.Browser.svg || !L.Browser.vml ? L.Path : L.Path.extend({
-	statics: {
-		VML: true,
-		CLIP_PADDING: 0.02
-	},
-
-	_createElement: (function () {
-		try {
-			document.namespaces.add('lvml', 'urn:schemas-microsoft-com:vml');
-			return function (name) {
-				return document.createElement('<lvml:' + name + ' class="lvml">');
-			};
-		} catch (e) {
-			return function (name) {
-				return document.createElement(
-				        '<' + name + ' xmlns="urn:schemas-microsoft.com:vml" class="lvml">');
-			};
-		}
-	}()),
-
-	_initPath: function () {
-		var container = this._container = this._createElement('shape');
-
-		L.DomUtil.addClass(container, 'leaflet-vml-shape' +
-			(this.options.className ? ' ' + this.options.className : ''));
-
-		if (this.options.clickable) {
-			L.DomUtil.addClass(container, 'leaflet-clickable');
-		}
-
-		container.coordsize = '1 1';
-
-		this._path = this._createElement('path');
-		container.appendChild(this._path);
-
-		this._map._pathRoot.appendChild(container);
-	},
-
-	_initStyle: function () {
-		this._updateStyle();
-	},
-
-	_updateStyle: function () {
-		var stroke = this._stroke,
-		    fill = this._fill,
-		    options = this.options,
-		    container = this._container;
-
-		container.stroked = options.stroke;
-		container.filled = options.fill;
-
-		if (options.stroke) {
-			if (!stroke) {
-				stroke = this._stroke = this._createElement('stroke');
-				stroke.endcap = 'round';
-				container.appendChild(stroke);
-			}
-			stroke.weight = options.weight + 'px';
-			stroke.color = options.color;
-			stroke.opacity = options.opacity;
-
-			if (options.dashArray) {
-				stroke.dashStyle = L.Util.isArray(options.dashArray) ?
-				    options.dashArray.join(' ') :
-				    options.dashArray.replace(/( *, *)/g, ' ');
-			} else {
-				stroke.dashStyle = '';
-			}
-			if (options.lineCap) {
-				stroke.endcap = options.lineCap.replace('butt', 'flat');
-			}
-			if (options.lineJoin) {
-				stroke.joinstyle = options.lineJoin;
-			}
-
-		} else if (stroke) {
-			container.removeChild(stroke);
-			this._stroke = null;
-		}
-
-		if (options.fill) {
-			if (!fill) {
-				fill = this._fill = this._createElement('fill');
-				container.appendChild(fill);
-			}
-			fill.color = options.fillColor || options.color;
-			fill.opacity = options.fillOpacity;
-
-		} else if (fill) {
-			container.removeChild(fill);
-			this._fill = null;
-		}
-	},
-
-	_updatePath: function () {
-		var style = this._container.style;
-
-		style.display = 'none';
-		this._path.v = this.getPathString() + ' '; // the space fixes IE empty path string bug
-		style.display = '';
-	}
-});
-
-L.Map.include(L.Browser.svg || !L.Browser.vml ? {} : {
-	_initPathRoot: function () {
-		if (this._pathRoot) { return; }
-
-		var root = this._pathRoot = document.createElement('div');
-		root.className = 'leaflet-vml-container';
-		this._panes.overlayPane.appendChild(root);
-
-		this.on('moveend', this._updatePathViewport);
-		this._updatePathViewport();
-	}
-});
-
-
-/*
- * Vector rendering for all browsers that support canvas.
- */
-
-L.Browser.canvas = (function () {
-	return !!document.createElement('canvas').getContext;
-}());
-
-L.Path = (L.Path.SVG && !window.L_PREFER_CANVAS) || !L.Browser.canvas ? L.Path : L.Path.extend({
-	statics: {
-		//CLIP_PADDING: 0.02, // not sure if there's a need to set it to a small value
-		CANVAS: true,
-		SVG: false
-	},
-
-	redraw: function () {
-		if (this._map) {
-			this.projectLatlngs();
-			this._requestUpdate();
-		}
-		return this;
-	},
-
-	setStyle: function (style) {
-		L.setOptions(this, style);
-
-		if (this._map) {
-			this._updateStyle();
-			this._requestUpdate();
-		}
-		return this;
-	},
-
-	onRemove: function (map) {
-		map
-		    .off('viewreset', this.projectLatlngs, this)
-		    .off('moveend', this._updatePath, this);
-
-		if (this.options.clickable) {
-			this._map.off('click', this._onClick, this);
-			this._map.off('mousemove', this._onMouseMove, this);
-		}
-
-		this._requestUpdate();
-		
-		this.fire('remove');
-		this._map = null;
-	},
-
-	_requestUpdate: function () {
-		if (this._map && !L.Path._updateRequest) {
-			L.Path._updateRequest = L.Util.requestAnimFrame(this._fireMapMoveEnd, this._map);
-		}
-	},
-
-	_fireMapMoveEnd: function () {
-		L.Path._updateRequest = null;
-		this.fire('moveend');
-	},
-
-	_initElements: function () {
-		this._map._initPathRoot();
-		this._ctx = this._map._canvasCtx;
-	},
-
-	_updateStyle: function () {
-		var options = this.options;
-
-		if (options.stroke) {
-			this._ctx.lineWidth = options.weight;
-			this._ctx.strokeStyle = options.color;
-		}
-		if (options.fill) {
-			this._ctx.fillStyle = options.fillColor || options.color;
-		}
-	},
-
-	_drawPath: function () {
-		var i, j, len, len2, point, drawMethod;
-
-		this._ctx.beginPath();
-
-		for (i = 0, len = this._parts.length; i < len; i++) {
-			for (j = 0, len2 = this._parts[i].length; j < len2; j++) {
-				point = this._parts[i][j];
-				drawMethod = (j === 0 ? 'move' : 'line') + 'To';
-
-				this._ctx[drawMethod](point.x, point.y);
-			}
-			// TODO refactor ugly hack
-			if (this instanceof L.Polygon) {
-				this._ctx.closePath();
-			}
-		}
-	},
-
-	_checkIfEmpty: function () {
-		return !this._parts.length;
-	},
-
-	_updatePath: function () {
-		if (this._checkIfEmpty()) { return; }
-
-		var ctx = this._ctx,
-		    options = this.options;
-
-		this._drawPath();
-		ctx.save();
-		this._updateStyle();
-
-		if (options.fill) {
-			ctx.globalAlpha = options.fillOpacity;
-			ctx.fill();
-		}
-
-		if (options.stroke) {
-			ctx.globalAlpha = options.opacity;
-			ctx.stroke();
-		}
-
-		ctx.restore();
-
-		// TODO optimization: 1 fill/stroke for all features with equal style instead of 1 for each feature
-	},
-
-	_initEvents: function () {
-		if (this.options.clickable) {
-			// TODO dblclick
-			this._map.on('mousemove', this._onMouseMove, this);
-			this._map.on('click', this._onClick, this);
-		}
-	},
-
-	_onClick: function (e) {
-		if (this._containsPoint(e.layerPoint)) {
-			this.fire('click', e);
-		}
-	},
-
-	_onMouseMove: function (e) {
-		if (!this._map || this._map._animatingZoom) { return; }
-
-		// TODO don't do on each move
-		if (this._containsPoint(e.layerPoint)) {
-			this._ctx.canvas.style.cursor = 'pointer';
-			this._mouseInside = true;
-			this.fire('mouseover', e);
-
-		} else if (this._mouseInside) {
-			this._ctx.canvas.style.cursor = '';
-			this._mouseInside = false;
-			this.fire('mouseout', e);
-		}
-	}
-});
-
-L.Map.include((L.Path.SVG && !window.L_PREFER_CANVAS) || !L.Browser.canvas ? {} : {
-	_initPathRoot: function () {
-		var root = this._pathRoot,
-		    ctx;
-
-		if (!root) {
-			root = this._pathRoot = document.createElement('canvas');
-			root.style.position = 'absolute';
-			ctx = this._canvasCtx = root.getContext('2d');
-
-			ctx.lineCap = 'round';
-			ctx.lineJoin = 'round';
-
-			this._panes.overlayPane.appendChild(root);
-
-			if (this.options.zoomAnimation) {
-				this._pathRoot.className = 'leaflet-zoom-animated';
-				this.on('zoomanim', this._animatePathZoom);
-				this.on('zoomend', this._endPathZoom);
-			}
-			this.on('moveend', this._updateCanvasViewport);
-			this._updateCanvasViewport();
-		}
-	},
-
-	_updateCanvasViewport: function () {
-		// don't redraw while zooming. See _updateSvgViewport for more details
-		if (this._pathZooming) { return; }
-		this._updatePathViewport();
-
-		var vp = this._pathViewport,
-		    min = vp.min,
-		    size = vp.max.subtract(min),
-		    root = this._pathRoot;
-
-		//TODO check if this works properly on mobile webkit
-		L.DomUtil.setPosition(root, min);
-		root.width = size.x;
-		root.height = size.y;
-		root.getContext('2d').translate(-min.x, -min.y);
-	}
-});
-
-
-/*
- * L.LineUtil contains different utility functions for line segments
- * and polylines (clipping, simplification, distances, etc.)
- */
-
-/*jshint bitwise:false */ // allow bitwise operations for this file
-
-L.LineUtil = {
-
-	// Simplify polyline with vertex reduction and Douglas-Peucker simplification.
-	// Improves rendering performance dramatically by lessening the number of points to draw.
-
-	simplify: function (/*Point[]*/ points, /*Number*/ tolerance) {
-		if (!tolerance || !points.length) {
-			return points.slice();
-		}
-
-		var sqTolerance = tolerance * tolerance;
-
-		// stage 1: vertex reduction
-		points = this._reducePoints(points, sqTolerance);
-
-		// stage 2: Douglas-Peucker simplification
-		points = this._simplifyDP(points, sqTolerance);
-
-		return points;
-	},
-
-	// distance from a point to a segment between two points
-	pointToSegmentDistance:  function (/*Point*/ p, /*Point*/ p1, /*Point*/ p2) {
-		return Math.sqrt(this._sqClosestPointOnSegment(p, p1, p2, true));
-	},
-
-	closestPointOnSegment: function (/*Point*/ p, /*Point*/ p1, /*Point*/ p2) {
-		return this._sqClosestPointOnSegment(p, p1, p2);
-	},
-
-	// Douglas-Peucker simplification, see http://en.wikipedia.org/wiki/Douglas-Peucker_algorithm
-	_simplifyDP: function (points, sqTolerance) {
-
-		var len = points.length,
-		    ArrayConstructor = typeof Uint8Array !== undefined + '' ? Uint8Array : Array,
-		    markers = new ArrayConstructor(len);
-
-		markers[0] = markers[len - 1] = 1;
-
-		this._simplifyDPStep(points, markers, sqTolerance, 0, len - 1);
-
-		var i,
-		    newPoints = [];
-
-		for (i = 0; i < len; i++) {
-			if (markers[i]) {
-				newPoints.push(points[i]);
-			}
-		}
-
-		return newPoints;
-	},
-
-	_simplifyDPStep: function (points, markers, sqTolerance, first, last) {
-
-		var maxSqDist = 0,
-		    index, i, sqDist;
-
-		for (i = first + 1; i <= last - 1; i++) {
-			sqDist = this._sqClosestPointOnSegment(points[i], points[first], points[last], true);
-
-			if (sqDist > maxSqDist) {
-				index = i;
-				maxSqDist = sqDist;
-			}
-		}
-
-		if (maxSqDist > sqTolerance) {
-			markers[index] = 1;
-
-			this._simplifyDPStep(points, markers, sqTolerance, first, index);
-			this._simplifyDPStep(points, markers, sqTolerance, index, last);
-		}
-	},
-
-	// reduce points that are too close to each other to a single point
-	_reducePoints: function (points, sqTolerance) {
-		var reducedPoints = [points[0]];
-
-		for (var i = 1, prev = 0, len = points.length; i < len; i++) {
-			if (this._sqDist(points[i], points[prev]) > sqTolerance) {
-				reducedPoints.push(points[i]);
-				prev = i;
-			}
-		}
-		if (prev < len - 1) {
-			reducedPoints.push(points[len - 1]);
-		}
-		return reducedPoints;
-	},
-
-	// Cohen-Sutherland line clipping algorithm.
-	// Used to avoid rendering parts of a polyline that are not currently visible.
-
-	clipSegment: function (a, b, bounds, useLastCode) {
-		var codeA = useLastCode ? this._lastCode : this._getBitCode(a, bounds),
-		    codeB = this._getBitCode(b, bounds),
-
-		    codeOut, p, newCode;
-
-		// save 2nd code to avoid calculating it on the next segment
-		this._lastCode = codeB;
-
-		while (true) {
-			// if a,b is inside the clip window (trivial accept)
-			if (!(codeA | codeB)) {
-				return [a, b];
-			// if a,b is outside the clip window (trivial reject)
-			} else if (codeA & codeB) {
-				return false;
-			// other cases
-			} else {
-				codeOut = codeA || codeB;
-				p = this._getEdgeIntersection(a, b, codeOut, bounds);
-				newCode = this._getBitCode(p, bounds);
-
-				if (codeOut === codeA) {
-					a = p;
-					codeA = newCode;
-				} else {
-					b = p;
-					codeB = newCode;
-				}
-			}
-		}
-	},
-
-	_getEdgeIntersection: function (a, b, code, bounds) {
-		var dx = b.x - a.x,
-		    dy = b.y - a.y,
-		    min = bounds.min,
-		    max = bounds.max;
-
-		if (code & 8) { // top
-			return new L.Point(a.x + dx * (max.y - a.y) / dy, max.y);
-		} else if (code & 4) { // bottom
-			return new L.Point(a.x + dx * (min.y - a.y) / dy, min.y);
-		} else if (code & 2) { // right
-			return new L.Point(max.x, a.y + dy * (max.x - a.x) / dx);
-		} else if (code & 1) { // left
-			return new L.Point(min.x, a.y + dy * (min.x - a.x) / dx);
-		}
-	},
-
-	_getBitCode: function (/*Point*/ p, bounds) {
-		var code = 0;
-
-		if (p.x < bounds.min.x) { // left
-			code |= 1;
-		} else if (p.x > bounds.max.x) { // right
-			code |= 2;
-		}
-		if (p.y < bounds.min.y) { // bottom
-			code |= 4;
-		} else if (p.y > bounds.max.y) { // top
-			code |= 8;
-		}
-
-		return code;
-	},
-
-	// square distance (to avoid unnecessary Math.sqrt calls)
-	_sqDist: function (p1, p2) {
-		var dx = p2.x - p1.x,
-		    dy = p2.y - p1.y;
-		return dx * dx + dy * dy;
-	},
-
-	// return closest point on segment or distance to that point
-	_sqClosestPointOnSegment: function (p, p1, p2, sqDist) {
-		var x = p1.x,
-		    y = p1.y,
-		    dx = p2.x - x,
-		    dy = p2.y - y,
-		    dot = dx * dx + dy * dy,
-		    t;
-
-		if (dot > 0) {
-			t = ((p.x - x) * dx + (p.y - y) * dy) / dot;
-
-			if (t > 1) {
-				x = p2.x;
-				y = p2.y;
-			} else if (t > 0) {
-				x += dx * t;
-				y += dy * t;
-			}
-		}
-
-		dx = p.x - x;
-		dy = p.y - y;
-
-		return sqDist ? dx * dx + dy * dy : new L.Point(x, y);
-	}
-};
-
-
-/*
- * L.Polyline is used to display polylines on a map.
- */
-
-L.Polyline = L.Path.extend({
-	initialize: function (latlngs, options) {
-		L.Path.prototype.initialize.call(this, options);
-
-		this._latlngs = this._convertLatLngs(latlngs);
-	},
-
-	options: {
-		// how much to simplify the polyline on each zoom level
-		// more = better performance and smoother look, less = more accurate
-		smoothFactor: 1.0,
-		noClip: false
-	},
-
-	projectLatlngs: function () {
-		this._originalPoints = [];
-
-		for (var i = 0, len = this._latlngs.length; i < len; i++) {
-			this._originalPoints[i] = this._map.latLngToLayerPoint(this._latlngs[i]);
-		}
-	},
-
-	getPathString: function () {
-		for (var i = 0, len = this._parts.length, str = ''; i < len; i++) {
-			str += this._getPathPartStr(this._parts[i]);
-		}
-		return str;
-	},
-
-	getLatLngs: function () {
-		return this._latlngs;
-	},
-
-	setLatLngs: function (latlngs) {
-		this._latlngs = this._convertLatLngs(latlngs);
-		return this.redraw();
-	},
-
-	addLatLng: function (latlng) {
-		this._latlngs.push(L.latLng(latlng));
-		return this.redraw();
-	},
-
-	spliceLatLngs: function () { // (Number index, Number howMany)
-		var removed = [].splice.apply(this._latlngs, arguments);
-		this._convertLatLngs(this._latlngs, true);
-		this.redraw();
-		return removed;
-	},
-
-	closestLayerPoint: function (p) {
-		var minDistance = Infinity, parts = this._parts, p1, p2, minPoint = null;
-
-		for (var j = 0, jLen = parts.length; j < jLen; j++) {
-			var points = parts[j];
-			for (var i = 1, len = points.length; i < len; i++) {
-				p1 = points[i - 1];
-				p2 = points[i];
-				var sqDist = L.LineUtil._sqClosestPointOnSegment(p, p1, p2, true);
-				if (sqDist < minDistance) {
-					minDistance = sqDist;
-					minPoint = L.LineUtil._sqClosestPointOnSegment(p, p1, p2);
-				}
-			}
-		}
-		if (minPoint) {
-			minPoint.distance = Math.sqrt(minDistance);
-		}
-		return minPoint;
-	},
-
-	getBounds: function () {
-		return new L.LatLngBounds(this.getLatLngs());
-	},
-
-	_convertLatLngs: function (latlngs, overwrite) {
-		var i, len, target = overwrite ? latlngs : [];
-
-		for (i = 0, len = latlngs.length; i < len; i++) {
-			if (L.Util.isArray(latlngs[i]) && typeof latlngs[i][0] !== 'number') {
-				return;
-			}
-			target[i] = L.latLng(latlngs[i]);
-		}
-		return target;
-	},
-
-	_initEvents: function () {
-		L.Path.prototype._initEvents.call(this);
-	},
-
-	_getPathPartStr: function (points) {
-		var round = L.Path.VML;
-
-		for (var j = 0, len2 = points.length, str = '', p; j < len2; j++) {
-			p = points[j];
-			if (round) {
-				p._round();
-			}
-			str += (j ? 'L' : 'M') + p.x + ' ' + p.y;
-		}
-		return str;
-	},
-
-	_clipPoints: function () {
-		var points = this._originalPoints,
-		    len = points.length,
-		    i, k, segment;
-
-		if (this.options.noClip) {
-			this._parts = [points];
-			return;
-		}
-
-		this._parts = [];
-
-		var parts = this._parts,
-		    vp = this._map._pathViewport,
-		    lu = L.LineUtil;
-
-		for (i = 0, k = 0; i < len - 1; i++) {
-			segment = lu.clipSegment(points[i], points[i + 1], vp, i);
-			if (!segment) {
-				continue;
-			}
-
-			parts[k] = parts[k] || [];
-			parts[k].push(segment[0]);
-
-			// if segment goes out of screen, or it's the last one, it's the end of the line part
-			if ((segment[1] !== points[i + 1]) || (i === len - 2)) {
-				parts[k].push(segment[1]);
-				k++;
-			}
-		}
-	},
-
-	// simplify each clipped part of the polyline
-	_simplifyPoints: function () {
-		var parts = this._parts,
-		    lu = L.LineUtil;
-
-		for (var i = 0, len = parts.length; i < len; i++) {
-			parts[i] = lu.simplify(parts[i], this.options.smoothFactor);
-		}
-	},
-
-	_updatePath: function () {
-		if (!this._map) { return; }
-
-		this._clipPoints();
-		this._simplifyPoints();
-
-		L.Path.prototype._updatePath.call(this);
-	}
-});
-
-L.polyline = function (latlngs, options) {
-	return new L.Polyline(latlngs, options);
-};
-
-
-/*
- * L.PolyUtil contains utility functions for polygons (clipping, etc.).
- */
-
-/*jshint bitwise:false */ // allow bitwise operations here
-
-L.PolyUtil = {};
-
-/*
- * Sutherland-Hodgeman polygon clipping algorithm.
- * Used to avoid rendering parts of a polygon that are not currently visible.
- */
-L.PolyUtil.clipPolygon = function (points, bounds) {
-	var clippedPoints,
-	    edges = [1, 4, 2, 8],
-	    i, j, k,
-	    a, b,
-	    len, edge, p,
-	    lu = L.LineUtil;
-
-	for (i = 0, len = points.length; i < len; i++) {
-		points[i]._code = lu._getBitCode(points[i], bounds);
-	}
-
-	// for each edge (left, bottom, right, top)
-	for (k = 0; k < 4; k++) {
-		edge = edges[k];
-		clippedPoints = [];
-
-		for (i = 0, len = points.length, j = len - 1; i < len; j = i++) {
-			a = points[i];
-			b = points[j];
-
-			// if a is inside the clip window
-			if (!(a._code & edge)) {
-				// if b is outside the clip window (a->b goes out of screen)
-				if (b._code & edge) {
-					p = lu._getEdgeIntersection(b, a, edge, bounds);
-					p._code = lu._getBitCode(p, bounds);
-					clippedPoints.push(p);
-				}
-				clippedPoints.push(a);
-
-			// else if b is inside the clip window (a->b enters the screen)
-			} else if (!(b._code & edge)) {
-				p = lu._getEdgeIntersection(b, a, edge, bounds);
-				p._code = lu._getBitCode(p, bounds);
-				clippedPoints.push(p);
-			}
-		}
-		points = clippedPoints;
-	}
-
-	return points;
-};
-
-
-/*
- * L.Polygon is used to display polygons on a map.
- */
-
-L.Polygon = L.Polyline.extend({
-	options: {
-		fill: true
-	},
-
-	initialize: function (latlngs, options) {
-		L.Polyline.prototype.initialize.call(this, latlngs, options);
-		this._initWithHoles(latlngs);
-	},
-
-	_initWithHoles: function (latlngs) {
-		var i, len, hole;
-		if (latlngs && L.Util.isArray(latlngs[0]) && (typeof latlngs[0][0] !== 'number')) {
-			this._latlngs = this._convertLatLngs(latlngs[0]);
-			this._holes = latlngs.slice(1);
-
-			for (i = 0, len = this._holes.length; i < len; i++) {
-				hole = this._holes[i] = this._convertLatLngs(this._holes[i]);
-				if (hole[0].equals(hole[hole.length - 1])) {
-					hole.pop();
-				}
-			}
-		}
-
-		// filter out last point if its equal to the first one
-		latlngs = this._latlngs;
-
-		if (latlngs.length >= 2 && latlngs[0].equals(latlngs[latlngs.length - 1])) {
-			latlngs.pop();
-		}
-	},
-
-	projectLatlngs: function () {
-		L.Polyline.prototype.projectLatlngs.call(this);
-
-		// project polygon holes points
-		// TODO move this logic to Polyline to get rid of duplication
-		this._holePoints = [];
-
-		if (!this._holes) { return; }
-
-		var i, j, len, len2;
-
-		for (i = 0, len = this._holes.length; i < len; i++) {
-			this._holePoints[i] = [];
-
-			for (j = 0, len2 = this._holes[i].length; j < len2; j++) {
-				this._holePoints[i][j] = this._map.latLngToLayerPoint(this._holes[i][j]);
-			}
-		}
-	},
-
-	setLatLngs: function (latlngs) {
-		if (latlngs && L.Util.isArray(latlngs[0]) && (typeof latlngs[0][0] !== 'number')) {
-			this._initWithHoles(latlngs);
-			return this.redraw();
-		} else {
-			return L.Polyline.prototype.setLatLngs.call(this, latlngs);
-		}
-	},
-
-	_clipPoints: function () {
-		var points = this._originalPoints,
-		    newParts = [];
-
-		this._parts = [points].concat(this._holePoints);
-
-		if (this.options.noClip) { return; }
-
-		for (var i = 0, len = this._parts.length; i < len; i++) {
-			var clipped = L.PolyUtil.clipPolygon(this._parts[i], this._map._pathViewport);
-			if (clipped.length) {
-				newParts.push(clipped);
-			}
-		}
-
-		this._parts = newParts;
-	},
-
-	_getPathPartStr: function (points) {
-		var str = L.Polyline.prototype._getPathPartStr.call(this, points);
-		return str + (L.Browser.svg ? 'z' : 'x');
-	}
-});
-
-L.polygon = function (latlngs, options) {
-	return new L.Polygon(latlngs, options);
-};
-
-
-/*
- * Contains L.MultiPolyline and L.MultiPolygon layers.
- */
-
-(function () {
-	function createMulti(Klass) {
-
-		return L.FeatureGroup.extend({
-
-			initialize: function (latlngs, options) {
-				this._layers = {};
-				this._options = options;
-				this.setLatLngs(latlngs);
-			},
-
-			setLatLngs: function (latlngs) {
-				var i = 0,
-				    len = latlngs.length;
-
-				this.eachLayer(function (layer) {
-					if (i < len) {
-						layer.setLatLngs(latlngs[i++]);
-					} else {
-						this.removeLayer(layer);
-					}
-				}, this);
-
-				while (i < len) {
-					this.addLayer(new Klass(latlngs[i++], this._options));
-				}
-
-				return this;
-			},
-
-			getLatLngs: function () {
-				var latlngs = [];
-
-				this.eachLayer(function (layer) {
-					latlngs.push(layer.getLatLngs());
-				});
-
-				return latlngs;
-			}
-		});
-	}
-
-	L.MultiPolyline = createMulti(L.Polyline);
-	L.MultiPolygon = createMulti(L.Polygon);
-
-	L.multiPolyline = function (latlngs, options) {
-		return new L.MultiPolyline(latlngs, options);
-	};
-
-	L.multiPolygon = function (latlngs, options) {
-		return new L.MultiPolygon(latlngs, options);
-	};
-}());
-
-
-/*
- * L.Rectangle extends Polygon and creates a rectangle when passed a LatLngBounds object.
- */
-
-L.Rectangle = L.Polygon.extend({
-	initialize: function (latLngBounds, options) {
-		L.Polygon.prototype.initialize.call(this, this._boundsToLatLngs(latLngBounds), options);
-	},
-
-	setBounds: function (latLngBounds) {
-		this.setLatLngs(this._boundsToLatLngs(latLngBounds));
-	},
-
-	_boundsToLatLngs: function (latLngBounds) {
-		latLngBounds = L.latLngBounds(latLngBounds);
-		return [
-			latLngBounds.getSouthWest(),
-			latLngBounds.getNorthWest(),
-			latLngBounds.getNorthEast(),
-			latLngBounds.getSouthEast()
-		];
-	}
-});
-
-L.rectangle = function (latLngBounds, options) {
-	return new L.Rectangle(latLngBounds, options);
-};
-
-
-/*
- * L.Circle is a circle overlay (with a certain radius in meters).
- */
-
-L.Circle = L.Path.extend({
-	initialize: function (latlng, radius, options) {
-		L.Path.prototype.initialize.call(this, options);
-
-		this._latlng = L.latLng(latlng);
-		this._mRadius = radius;
-	},
-
-	options: {
-		fill: true
-	},
-
-	setLatLng: function (latlng) {
-		this._latlng = L.latLng(latlng);
-		return this.redraw();
-	},
-
-	setRadius: function (radius) {
-		this._mRadius = radius;
-		return this.redraw();
-	},
-
-	projectLatlngs: function () {
-		var lngRadius = this._getLngRadius(),
-		    latlng = this._latlng,
-		    pointLeft = this._map.latLngToLayerPoint([latlng.lat, latlng.lng - lngRadius]);
-
-		this._point = this._map.latLngToLayerPoint(latlng);
-		this._radius = Math.max(this._point.x - pointLeft.x, 1);
-	},
-
-	getBounds: function () {
-		var lngRadius = this._getLngRadius(),
-		    latRadius = (this._mRadius / 40075017) * 360,
-		    latlng = this._latlng;
-
-		return new L.LatLngBounds(
-		        [latlng.lat - latRadius, latlng.lng - lngRadius],
-		        [latlng.lat + latRadius, latlng.lng + lngRadius]);
-	},
-
-	getLatLng: function () {
-		return this._latlng;
-	},
-
-	getPathString: function () {
-		var p = this._point,
-		    r = this._radius;
-
-		if (this._checkIfEmpty()) {
-			return '';
-		}
-
-		if (L.Browser.svg) {
-			return 'M' + p.x + ',' + (p.y - r) +
-			       'A' + r + ',' + r + ',0,1,1,' +
-			       (p.x - 0.1) + ',' + (p.y - r) + ' z';
-		} else {
-			p._round();
-			r = Math.round(r);
-			return 'AL ' + p.x + ',' + p.y + ' ' + r + ',' + r + ' 0,' + (65535 * 360);
-		}
-	},
-
-	getRadius: function () {
-		return this._mRadius;
-	},
-
-	// TODO Earth hardcoded, move into projection code!
-
-	_getLatRadius: function () {
-		return (this._mRadius / 40075017) * 360;
-	},
-
-	_getLngRadius: function () {
-		return this._getLatRadius() / Math.cos(L.LatLng.DEG_TO_RAD * this._latlng.lat);
-	},
-
-	_checkIfEmpty: function () {
-		if (!this._map) {
-			return false;
-		}
-		var vp = this._map._pathViewport,
-		    r = this._radius,
-		    p = this._point;
-
-		return p.x - r > vp.max.x || p.y - r > vp.max.y ||
-		       p.x + r < vp.min.x || p.y + r < vp.min.y;
-	}
-});
-
-L.circle = function (latlng, radius, options) {
-	return new L.Circle(latlng, radius, options);
-};
-
-
-/*
- * L.CircleMarker is a circle overlay with a permanent pixel radius.
- */
-
-L.CircleMarker = L.Circle.extend({
-	options: {
-		radius: 10,
-		weight: 2
-	},
-
-	initialize: function (latlng, options) {
-		L.Circle.prototype.initialize.call(this, latlng, null, options);
-		this._radius = this.options.radius;
-	},
-
-	projectLatlngs: function () {
-		this._point = this._map.latLngToLayerPoint(this._latlng);
-	},
-
-	_updateStyle : function () {
-		L.Circle.prototype._updateStyle.call(this);
-		this.setRadius(this.options.radius);
-	},
-
-	setLatLng: function (latlng) {
-		L.Circle.prototype.setLatLng.call(this, latlng);
-		if (this._popup && this._popup._isOpen) {
-			this._popup.setLatLng(latlng);
-		}
-		return this;
-	},
-
-	setRadius: function (radius) {
-		this.options.radius = this._radius = radius;
-		return this.redraw();
-	},
-
-	getRadius: function () {
-		return this._radius;
-	}
-});
-
-L.circleMarker = function (latlng, options) {
-	return new L.CircleMarker(latlng, options);
-};
-
-
-/*
- * Extends L.Polyline to be able to manually detect clicks on Canvas-rendered polylines.
- */
-
-L.Polyline.include(!L.Path.CANVAS ? {} : {
-	_containsPoint: function (p, closed) {
-		var i, j, k, len, len2, dist, part,
-		    w = this.options.weight / 2;
-
-		if (L.Browser.touch) {
-			w += 10; // polyline click tolerance on touch devices
-		}
-
-		for (i = 0, len = this._parts.length; i < len; i++) {
-			part = this._parts[i];
-			for (j = 0, len2 = part.length, k = len2 - 1; j < len2; k = j++) {
-				if (!closed && (j === 0)) {
-					continue;
-				}
-
-				dist = L.LineUtil.pointToSegmentDistance(p, part[k], part[j]);
-
-				if (dist <= w) {
-					return true;
-				}
-			}
-		}
-		return false;
-	}
-});
-
-
-/*
- * Extends L.Polygon to be able to manually detect clicks on Canvas-rendered polygons.
- */
-
-L.Polygon.include(!L.Path.CANVAS ? {} : {
-	_containsPoint: function (p) {
-		var inside = false,
-		    part, p1, p2,
-		    i, j, k,
-		    len, len2;
-
-		// TODO optimization: check if within bounds first
-
-		if (L.Polyline.prototype._containsPoint.call(this, p, true)) {
-			// click on polygon border
-			return true;
-		}
-
-		// ray casting algorithm for detecting if point is in polygon
-
-		for (i = 0, len = this._parts.length; i < len; i++) {
-			part = this._parts[i];
-
-			for (j = 0, len2 = part.length, k = len2 - 1; j < len2; k = j++) {
-				p1 = part[j];
-				p2 = part[k];
-
-				if (((p1.y > p.y) !== (p2.y > p.y)) &&
-						(p.x < (p2.x - p1.x) * (p.y - p1.y) / (p2.y - p1.y) + p1.x)) {
-					inside = !inside;
-				}
-			}
-		}
-
-		return inside;
-	}
-});
-
-
-/*
- * Extends L.Circle with Canvas-specific code.
- */
-
-L.Circle.include(!L.Path.CANVAS ? {} : {
-	_drawPath: function () {
-		var p = this._point;
-		this._ctx.beginPath();
-		this._ctx.arc(p.x, p.y, this._radius, 0, Math.PI * 2, false);
-	},
-
-	_containsPoint: function (p) {
-		var center = this._point,
-		    w2 = this.options.stroke ? this.options.weight / 2 : 0;
-
-		return (p.distanceTo(center) <= this._radius + w2);
-	}
-});
-
-
-/*
- * CircleMarker canvas specific drawing parts.
- */
-
-L.CircleMarker.include(!L.Path.CANVAS ? {} : {
-	_updateStyle: function () {
-		L.Path.prototype._updateStyle.call(this);
-	}
-});
-
-
-/*
- * L.GeoJSON turns any GeoJSON data into a Leaflet layer.
- */
-
-L.GeoJSON = L.FeatureGroup.extend({
-
-	initialize: function (geojson, options) {
-		L.setOptions(this, options);
-
-		this._layers = {};
-
-		if (geojson) {
-			this.addData(geojson);
-		}
-	},
-
-	addData: function (geojson) {
-		var features = L.Util.isArray(geojson) ? geojson : geojson.features,
-		    i, len, feature;
-
-		if (features) {
-			for (i = 0, len = features.length; i < len; i++) {
-				// Only add this if geometry or geometries are set and not null
-				feature = features[i];
-				if (feature.geometries || feature.geometry || feature.features || feature.coordinates) {
-					this.addData(features[i]);
-				}
-			}
-			return this;
-		}
-
-		var options = this.options;
-
-		if (options.filter && !options.filter(geojson)) { return; }
-
-		var layer = L.GeoJSON.geometryToLayer(geojson, options.pointToLayer, options.coordsToLatLng, options);
-		layer.feature = L.GeoJSON.asFeature(geojson);
-
-		layer.defaultOptions = layer.options;
-		this.resetStyle(layer);
-
-		if (options.onEachFeature) {
-			options.onEachFeature(geojson, layer);
-		}
-
-		return this.addLayer(layer);
-	},
-
-	resetStyle: function (layer) {
-		var style = this.options.style;
-		if (style) {
-			// reset any custom styles
-			L.Util.extend(layer.options, layer.defaultOptions);
-
-			this._setLayerStyle(layer, style);
-		}
-	},
-
-	setStyle: function (style) {
-		this.eachLayer(function (layer) {
-			this._setLayerStyle(layer, style);
-		}, this);
-	},
-
-	_setLayerStyle: function (layer, style) {
-		if (typeof style === 'function') {
-			style = style(layer.feature);
-		}
-		if (layer.setStyle) {
-			layer.setStyle(style);
-		}
-	}
-});
-
-L.extend(L.GeoJSON, {
-	geometryToLayer: function (geojson, pointToLayer, coordsToLatLng, vectorOptions) {
-		var geometry = geojson.type === 'Feature' ? geojson.geometry : geojson,
-		    coords = geometry.coordinates,
-		    layers = [],
-		    latlng, latlngs, i, len;
-
-		coordsToLatLng = coordsToLatLng || this.coordsToLatLng;
-
-		switch (geometry.type) {
-		case 'Point':
-			latlng = coordsToLatLng(coords);
-			return pointToLayer ? pointToLayer(geojson, latlng) : new L.Marker(latlng);
-
-		case 'MultiPoint':
-			for (i = 0, len = coords.length; i < len; i++) {
-				latlng = coordsToLatLng(coords[i]);
-				layers.push(pointToLayer ? pointToLayer(geojson, latlng) : new L.Marker(latlng));
-			}
-			return new L.FeatureGroup(layers);
-
-		case 'LineString':
-			latlngs = this.coordsToLatLngs(coords, 0, coordsToLatLng);
-			return new L.Polyline(latlngs, vectorOptions);
-
-		case 'Polygon':
-			if (coords.length === 2 && !coords[1].length) {
-				throw new Error('Invalid GeoJSON object.');
-			}
-			latlngs = this.coordsToLatLngs(coords, 1, coordsToLatLng);
-			return new L.Polygon(latlngs, vectorOptions);
-
-		case 'MultiLineString':
-			latlngs = this.coordsToLatLngs(coords, 1, coordsToLatLng);
-			return new L.MultiPolyline(latlngs, vectorOptions);
-
-		case 'MultiPolygon':
-			latlngs = this.coordsToLatLngs(coords, 2, coordsToLatLng);
-			return new L.MultiPolygon(latlngs, vectorOptions);
-
-		case 'GeometryCollection':
-			for (i = 0, len = geometry.geometries.length; i < len; i++) {
-
-				layers.push(this.geometryToLayer({
-					geometry: geometry.geometries[i],
-					type: 'Feature',
-					properties: geojson.properties
-				}, pointToLayer, coordsToLatLng, vectorOptions));
-			}
-			return new L.FeatureGroup(layers);
-
-		default:
-			throw new Error('Invalid GeoJSON object.');
-		}
-	},
-
-	coordsToLatLng: function (coords) { // (Array[, Boolean]) -> LatLng
-		return new L.LatLng(coords[1], coords[0], coords[2]);
-	},
-
-	coordsToLatLngs: function (coords, levelsDeep, coordsToLatLng) { // (Array[, Number, Function]) -> Array
-		var latlng, i, len,
-		    latlngs = [];
-
-		for (i = 0, len = coords.length; i < len; i++) {
-			latlng = levelsDeep ?
-			        this.coordsToLatLngs(coords[i], levelsDeep - 1, coordsToLatLng) :
-			        (coordsToLatLng || this.coordsToLatLng)(coords[i]);
-
-			latlngs.push(latlng);
-		}
-
-		return latlngs;
-	},
-
-	latLngToCoords: function (latlng) {
-		var coords = [latlng.lng, latlng.lat];
-
-		if (latlng.alt !== undefined) {
-			coords.push(latlng.alt);
-		}
-		return coords;
-	},
-
-	latLngsToCoords: function (latLngs) {
-		var coords = [];
-
-		for (var i = 0, len = latLngs.length; i < len; i++) {
-			coords.push(L.GeoJSON.latLngToCoords(latLngs[i]));
-		}
-
-		return coords;
-	},
-
-	getFeature: function (layer, newGeometry) {
-		return layer.feature ? L.extend({}, layer.feature, {geometry: newGeometry}) : L.GeoJSON.asFeature(newGeometry);
-	},
-
-	asFeature: function (geoJSON) {
-		if (geoJSON.type === 'Feature') {
-			return geoJSON;
-		}
-
-		return {
-			type: 'Feature',
-			properties: {},
-			geometry: geoJSON
-		};
-	}
-});
-
-var PointToGeoJSON = {
-	toGeoJSON: function () {
-		return L.GeoJSON.getFeature(this, {
-			type: 'Point',
-			coordinates: L.GeoJSON.latLngToCoords(this.getLatLng())
-		});
-	}
-};
-
-L.Marker.include(PointToGeoJSON);
-L.Circle.include(PointToGeoJSON);
-L.CircleMarker.include(PointToGeoJSON);
-
-L.Polyline.include({
-	toGeoJSON: function () {
-		return L.GeoJSON.getFeature(this, {
-			type: 'LineString',
-			coordinates: L.GeoJSON.latLngsToCoords(this.getLatLngs())
-		});
-	}
-});
-
-L.Polygon.include({
-	toGeoJSON: function () {
-		var coords = [L.GeoJSON.latLngsToCoords(this.getLatLngs())],
-		    i, len, hole;
-
-		coords[0].push(coords[0][0]);
-
-		if (this._holes) {
-			for (i = 0, len = this._holes.length; i < len; i++) {
-				hole = L.GeoJSON.latLngsToCoords(this._holes[i]);
-				hole.push(hole[0]);
-				coords.push(hole);
-			}
-		}
-
-		return L.GeoJSON.getFeature(this, {
-			type: 'Polygon',
-			coordinates: coords
-		});
-	}
-});
-
-(function () {
-	function multiToGeoJSON(type) {
-		return function () {
-			var coords = [];
-
-			this.eachLayer(function (layer) {
-				coords.push(layer.toGeoJSON().geometry.coordinates);
-			});
-
-			return L.GeoJSON.getFeature(this, {
-				type: type,
-				coordinates: coords
-			});
-		};
-	}
-
-	L.MultiPolyline.include({toGeoJSON: multiToGeoJSON('MultiLineString')});
-	L.MultiPolygon.include({toGeoJSON: multiToGeoJSON('MultiPolygon')});
-
-	L.LayerGroup.include({
-		toGeoJSON: function () {
-
-			var geometry = this.feature && this.feature.geometry,
-				jsons = [],
-				json;
-
-			if (geometry && geometry.type === 'MultiPoint') {
-				return multiToGeoJSON('MultiPoint').call(this);
-			}
-
-			var isGeometryCollection = geometry && geometry.type === 'GeometryCollection';
-
-			this.eachLayer(function (layer) {
-				if (layer.toGeoJSON) {
-					json = layer.toGeoJSON();
-					jsons.push(isGeometryCollection ? json.geometry : L.GeoJSON.asFeature(json));
-				}
-			});
-
-			if (isGeometryCollection) {
-				return L.GeoJSON.getFeature(this, {
-					geometries: jsons,
-					type: 'GeometryCollection'
-				});
-			}
-
-			return {
-				type: 'FeatureCollection',
-				features: jsons
-			};
-		}
-	});
-}());
-
-L.geoJson = function (geojson, options) {
-	return new L.GeoJSON(geojson, options);
-};
-
-
-/*
- * L.DomEvent contains functions for working with DOM events.
- */
-
-L.DomEvent = {
-	/* inspired by John Resig, Dean Edwards and YUI addEvent implementations */
-	addListener: function (obj, type, fn, context) { // (HTMLElement, String, Function[, Object])
-
-		var id = L.stamp(fn),
-		    key = '_leaflet_' + type + id,
-		    handler, originalHandler, newType;
-
-		if (obj[key]) { return this; }
-
-		handler = function (e) {
-			return fn.call(context || obj, e || L.DomEvent._getEvent());
-		};
-
-		if (L.Browser.pointer && type.indexOf('touch') === 0) {
-			return this.addPointerListener(obj, type, handler, id);
-		}
-		if (L.Browser.touch && (type === 'dblclick') && this.addDoubleTapListener) {
-			this.addDoubleTapListener(obj, handler, id);
-		}
-
-		if ('addEventListener' in obj) {
-
-			if (type === 'mousewheel') {
-				obj.addEventListener('DOMMouseScroll', handler, false);
-				obj.addEventListener(type, handler, false);
-
-			} else if ((type === 'mouseenter') || (type === 'mouseleave')) {
-
-				originalHandler = handler;
-				newType = (type === 'mouseenter' ? 'mouseover' : 'mouseout');
-
-				handler = function (e) {
-					if (!L.DomEvent._checkMouse(obj, e)) { return; }
-					return originalHandler(e);
-				};
-
-				obj.addEventListener(newType, handler, false);
-
-			} else if (type === 'click' && L.Browser.android) {
-				originalHandler = handler;
-				handler = function (e) {
-					return L.DomEvent._filterClick(e, originalHandler);
-				};
-
-				obj.addEventListener(type, handler, false);
-			} else {
-				obj.addEventListener(type, handler, false);
-			}
-
-		} else if ('attachEvent' in obj) {
-			obj.attachEvent('on' + type, handler);
-		}
-
-		obj[key] = handler;
-
-		return this;
-	},
-
-	removeListener: function (obj, type, fn) {  // (HTMLElement, String, Function)
-
-		var id = L.stamp(fn),
-		    key = '_leaflet_' + type + id,
-		    handler = obj[key];
-
-		if (!handler) { return this; }
-
-		if (L.Browser.pointer && type.indexOf('touch') === 0) {
-			this.removePointerListener(obj, type, id);
-		} else if (L.Browser.touch && (type === 'dblclick') && this.removeDoubleTapListener) {
-			this.removeDoubleTapListener(obj, id);
-
-		} else if ('removeEventListener' in obj) {
-
-			if (type === 'mousewheel') {
-				obj.removeEventListener('DOMMouseScroll', handler, false);
-				obj.removeEventListener(type, handler, false);
-
-			} else if ((type === 'mouseenter') || (type === 'mouseleave')) {
-				obj.removeEventListener((type === 'mouseenter' ? 'mouseover' : 'mouseout'), handler, false);
-			} else {
-				obj.removeEventListener(type, handler, false);
-			}
-		} else if ('detachEvent' in obj) {
-			obj.detachEvent('on' + type, handler);
-		}
-
-		obj[key] = null;
-
-		return this;
-	},
-
-	stopPropagation: function (e) {
-
-		if (e.stopPropagation) {
-			e.stopPropagation();
-		} else {
-			e.cancelBubble = true;
-		}
-		L.DomEvent._skipped(e);
-
-		return this;
-	},
-
-	disableScrollPropagation: function (el) {
-		var stop = L.DomEvent.stopPropagation;
-
-		return L.DomEvent
-			.on(el, 'mousewheel', stop)
-			.on(el, 'MozMousePixelScroll', stop);
-	},
-
-	disableClickPropagation: function (el) {
-		var stop = L.DomEvent.stopPropagation;
-
-		for (var i = L.Draggable.START.length - 1; i >= 0; i--) {
-			L.DomEvent.on(el, L.Draggable.START[i], stop);
-		}
-
-		return L.DomEvent
-			.on(el, 'click', L.DomEvent._fakeStop)
-			.on(el, 'dblclick', stop);
-	},
-
-	preventDefault: function (e) {
-
-		if (e.preventDefault) {
-			e.preventDefault();
-		} else {
-			e.returnValue = false;
-		}
-		return this;
-	},
-
-	stop: function (e) {
-		return L.DomEvent
-			.preventDefault(e)
-			.stopPropagation(e);
-	},
-
-	getMousePosition: function (e, container) {
-		if (!container) {
-			return new L.Point(e.clientX, e.clientY);
-		}
-
-		var rect = container.getBoundingClientRect();
-
-		return new L.Point(
-			e.clientX - rect.left - container.clientLeft,
-			e.clientY - rect.top - container.clientTop);
-	},
-
-	getWheelDelta: function (e) {
-
-		var delta = 0;
-
-		if (e.wheelDelta) {
-			delta = e.wheelDelta / 120;
-		}
-		if (e.detail) {
-			delta = -e.detail / 3;
-		}
-		return delta;
-	},
-
-	_skipEvents: {},
-
-	_fakeStop: function (e) {
-		// fakes stopPropagation by setting a special event flag, checked/reset with L.DomEvent._skipped(e)
-		L.DomEvent._skipEvents[e.type] = true;
-	},
-
-	_skipped: function (e) {
-		var skipped = this._skipEvents[e.type];
-		// reset when checking, as it's only used in map container and propagates outside of the map
-		this._skipEvents[e.type] = false;
-		return skipped;
-	},
-
-	// check if element really left/entered the event target (for mouseenter/mouseleave)
-	_checkMouse: function (el, e) {
-
-		var related = e.relatedTarget;
-
-		if (!related) { return true; }
-
-		try {
-			while (related && (related !== el)) {
-				related = related.parentNode;
-			}
-		} catch (err) {
-			return false;
-		}
-		return (related !== el);
-	},
-
-	_getEvent: function () { // evil magic for IE
-		/*jshint noarg:false */
-		var e = window.event;
-		if (!e) {
-			var caller = arguments.callee.caller;
-			while (caller) {
-				e = caller['arguments'][0];
-				if (e && window.Event === e.constructor) {
-					break;
-				}
-				caller = caller.caller;
-			}
-		}
-		return e;
-	},
-
-	// this is a horrible workaround for a bug in Android where a single touch triggers two click events
-	_filterClick: function (e, handler) {
-		var timeStamp = (e.timeStamp || e.originalEvent.timeStamp),
-			elapsed = L.DomEvent._lastClick && (timeStamp - L.DomEvent._lastClick);
-
-		// are they closer together than 500ms yet more than 100ms?
-		// Android typically triggers them ~300ms apart while multiple listeners
-		// on the same event should be triggered far faster;
-		// or check if click is simulated on the element, and if it is, reject any non-simulated events
-
-		if ((elapsed && elapsed > 100 && elapsed < 500) || (e.target._simulatedClick && !e._simulated)) {
-			L.DomEvent.stop(e);
-			return;
-		}
-		L.DomEvent._lastClick = timeStamp;
-
-		return handler(e);
-	}
-};
-
-L.DomEvent.on = L.DomEvent.addListener;
-L.DomEvent.off = L.DomEvent.removeListener;
-
-
-/*
- * L.Draggable allows you to add dragging capabilities to any element. Supports mobile devices too.
- */
-
-L.Draggable = L.Class.extend({
-	includes: L.Mixin.Events,
-
-	statics: {
-		START: L.Browser.touch ? ['touchstart', 'mousedown'] : ['mousedown'],
-		END: {
-			mousedown: 'mouseup',
-			touchstart: 'touchend',
-			pointerdown: 'touchend',
-			MSPointerDown: 'touchend'
-		},
-		MOVE: {
-			mousedown: 'mousemove',
-			touchstart: 'touchmove',
-			pointerdown: 'touchmove',
-			MSPointerDown: 'touchmove'
-		}
-	},
-
-	initialize: function (element, dragStartTarget) {
-		this._element = element;
-		this._dragStartTarget = dragStartTarget || element;
-	},
-
-	enable: function () {
-		if (this._enabled) { return; }
-
-		for (var i = L.Draggable.START.length - 1; i >= 0; i--) {
-			L.DomEvent.on(this._dragStartTarget, L.Draggable.START[i], this._onDown, this);
-		}
-
-		this._enabled = true;
-	},
-
-	disable: function () {
-		if (!this._enabled) { return; }
-
-		for (var i = L.Draggable.START.length - 1; i >= 0; i--) {
-			L.DomEvent.off(this._dragStartTarget, L.Draggable.START[i], this._onDown, this);
-		}
-
-		this._enabled = false;
-		this._moved = false;
-	},
-
-	_onDown: function (e) {
-		this._moved = false;
-
-		if (e.shiftKey || ((e.which !== 1) && (e.button !== 1) && !e.touches)) { return; }
-
-		L.DomEvent.stopPropagation(e);
-
-		if (L.Draggable._disabled) { return; }
-
-		L.DomUtil.disableImageDrag();
-		L.DomUtil.disableTextSelection();
-
-		if (this._moving) { return; }
-
-		var first = e.touches ? e.touches[0] : e;
-
-		this._startPoint = new L.Point(first.clientX, first.clientY);
-		this._startPos = this._newPos = L.DomUtil.getPosition(this._element);
-
-		L.DomEvent
-		    .on(document, L.Draggable.MOVE[e.type], this._onMove, this)
-		    .on(document, L.Draggable.END[e.type], this._onUp, this);
-	},
-
-	_onMove: function (e) {
-		if (e.touches && e.touches.length > 1) {
-			this._moved = true;
-			return;
-		}
-
-		var first = (e.touches && e.touches.length === 1 ? e.touches[0] : e),
-		    newPoint = new L.Point(first.clientX, first.clientY),
-		    offset = newPoint.subtract(this._startPoint);
-
-		if (!offset.x && !offset.y) { return; }
-		if (L.Browser.touch && Math.abs(offset.x) + Math.abs(offset.y) < 3) { return; }
-
-		L.DomEvent.preventDefault(e);
-
-		if (!this._moved) {
-			this.fire('dragstart');
-
-			this._moved = true;
-			this._startPos = L.DomUtil.getPosition(this._element).subtract(offset);
-
-			L.DomUtil.addClass(document.body, 'leaflet-dragging');
-			this._lastTarget = e.target || e.srcElement;
-			L.DomUtil.addClass(this._lastTarget, 'leaflet-drag-target');
-		}
-
-		this._newPos = this._startPos.add(offset);
-		this._moving = true;
-
-		L.Util.cancelAnimFrame(this._animRequest);
-		this._animRequest = L.Util.requestAnimFrame(this._updatePosition, this, true, this._dragStartTarget);
-	},
-
-	_updatePosition: function () {
-		this.fire('predrag');
-		L.DomUtil.setPosition(this._element, this._newPos);
-		this.fire('drag');
-	},
-
-	_onUp: function () {
-		L.DomUtil.removeClass(document.body, 'leaflet-dragging');
-
-		if (this._lastTarget) {
-			L.DomUtil.removeClass(this._lastTarget, 'leaflet-drag-target');
-			this._lastTarget = null;
-		}
-
-		for (var i in L.Draggable.MOVE) {
-			L.DomEvent
-			    .off(document, L.Draggable.MOVE[i], this._onMove)
-			    .off(document, L.Draggable.END[i], this._onUp);
-		}
-
-		L.DomUtil.enableImageDrag();
-		L.DomUtil.enableTextSelection();
-
-		if (this._moved && this._moving) {
-			// ensure drag is not fired after dragend
-			L.Util.cancelAnimFrame(this._animRequest);
-
-			this.fire('dragend', {
-				distance: this._newPos.distanceTo(this._startPos)
-			});
-		}
-
-		this._moving = false;
-	}
-});
-
-
-/*
-	L.Handler is a base class for handler classes that are used internally to inject
-	interaction features like dragging to classes like Map and Marker.
-*/
-
-L.Handler = L.Class.extend({
-	initialize: function (map) {
-		this._map = map;
-	},
-
-	enable: function () {
-		if (this._enabled) { return; }
-
-		this._enabled = true;
-		this.addHooks();
-	},
-
-	disable: function () {
-		if (!this._enabled) { return; }
-
-		this._enabled = false;
-		this.removeHooks();
-	},
-
-	enabled: function () {
-		return !!this._enabled;
-	}
-});
-
-
-/*
- * L.Handler.MapDrag is used to make the map draggable (with panning inertia), enabled by default.
- */
-
-L.Map.mergeOptions({
-	dragging: true,
-
-	inertia: !L.Browser.android23,
-	inertiaDeceleration: 3400, // px/s^2
-	inertiaMaxSpeed: Infinity, // px/s
-	inertiaThreshold: L.Browser.touch ? 32 : 18, // ms
-	easeLinearity: 0.25,
-
-	// TODO refactor, move to CRS
-	worldCopyJump: false
-});
-
-L.Map.Drag = L.Handler.extend({
-	addHooks: function () {
-		if (!this._draggable) {
-			var map = this._map;
-
-			this._draggable = new L.Draggable(map._mapPane, map._container);
-
-			this._draggable.on({
-				'dragstart': this._onDragStart,
-				'drag': this._onDrag,
-				'dragend': this._onDragEnd
-			}, this);
-
-			if (map.options.worldCopyJump) {
-				this._draggable.on('predrag', this._onPreDrag, this);
-				map.on('viewreset', this._onViewReset, this);
-
-				map.whenReady(this._onViewReset, this);
-			}
-		}
-		this._draggable.enable();
-	},
-
-	removeHooks: function () {
-		this._draggable.disable();
-	},
-
-	moved: function () {
-		return this._draggable && this._draggable._moved;
-	},
-
-	_onDragStart: function () {
-		var map = this._map;
-
-		if (map._panAnim) {
-			map._panAnim.stop();
-		}
-
-		map
-		    .fire('movestart')
-		    .fire('dragstart');
-
-		if (map.options.inertia) {
-			this._positions = [];
-			this._times = [];
-		}
-	},
-
-	_onDrag: function () {
-		if (this._map.options.inertia) {
-			var time = this._lastTime = +new Date(),
-			    pos = this._lastPos = this._draggable._newPos;
-
-			this._positions.push(pos);
-			this._times.push(time);
-
-			if (time - this._times[0] > 200) {
-				this._positions.shift();
-				this._times.shift();
-			}
-		}
-
-		this._map
-		    .fire('move')
-		    .fire('drag');
-	},
-
-	_onViewReset: function () {
-		// TODO fix hardcoded Earth values
-		var pxCenter = this._map.getSize()._divideBy(2),
-		    pxWorldCenter = this._map.latLngToLayerPoint([0, 0]);
-
-		this._initialWorldOffset = pxWorldCenter.subtract(pxCenter).x;
-		this._worldWidth = this._map.project([0, 180]).x;
-	},
-
-	_onPreDrag: function () {
-		// TODO refactor to be able to adjust map pane position after zoom
-		var worldWidth = this._worldWidth,
-		    halfWidth = Math.round(worldWidth / 2),
-		    dx = this._initialWorldOffset,
-		    x = this._draggable._newPos.x,
-		    newX1 = (x - halfWidth + dx) % worldWidth + halfWidth - dx,
-		    newX2 = (x + halfWidth + dx) % worldWidth - halfWidth - dx,
-		    newX = Math.abs(newX1 + dx) < Math.abs(newX2 + dx) ? newX1 : newX2;
-
-		this._draggable._newPos.x = newX;
-	},
-
-	_onDragEnd: function (e) {
-		var map = this._map,
-		    options = map.options,
-		    delay = +new Date() - this._lastTime,
-
-		    noInertia = !options.inertia || delay > options.inertiaThreshold || !this._positions[0];
-
-		map.fire('dragend', e);
-
-		if (noInertia) {
-			map.fire('moveend');
-
-		} else {
-
-			var direction = this._lastPos.subtract(this._positions[0]),
-			    duration = (this._lastTime + delay - this._times[0]) / 1000,
-			    ease = options.easeLinearity,
-
-			    speedVector = direction.multiplyBy(ease / duration),
-			    speed = speedVector.distanceTo([0, 0]),
-
-			    limitedSpeed = Math.min(options.inertiaMaxSpeed, speed),
-			    limitedSpeedVector = speedVector.multiplyBy(limitedSpeed / speed),
-
-			    decelerationDuration = limitedSpeed / (options.inertiaDeceleration * ease),
-			    offset = limitedSpeedVector.multiplyBy(-decelerationDuration / 2).round();
-
-			if (!offset.x || !offset.y) {
-				map.fire('moveend');
-
-			} else {
-				offset = map._limitOffset(offset, map.options.maxBounds);
-
-				L.Util.requestAnimFrame(function () {
-					map.panBy(offset, {
-						duration: decelerationDuration,
-						easeLinearity: ease,
-						noMoveStart: true
-					});
-				});
-			}
-		}
-	}
-});
-
-L.Map.addInitHook('addHandler', 'dragging', L.Map.Drag);
-
-
-/*
- * L.Handler.DoubleClickZoom is used to handle double-click zoom on the map, enabled by default.
- */
-
-L.Map.mergeOptions({
-	doubleClickZoom: true
-});
-
-L.Map.DoubleClickZoom = L.Handler.extend({
-	addHooks: function () {
-		this._map.on('dblclick', this._onDoubleClick, this);
-	},
-
-	removeHooks: function () {
-		this._map.off('dblclick', this._onDoubleClick, this);
-	},
-
-	_onDoubleClick: function (e) {
-		var map = this._map,
-		    zoom = map.getZoom() + (e.originalEvent.shiftKey ? -1 : 1);
-
-		if (map.options.doubleClickZoom === 'center') {
-			map.setZoom(zoom);
-		} else {
-			map.setZoomAround(e.containerPoint, zoom);
-		}
-	}
-});
-
-L.Map.addInitHook('addHandler', 'doubleClickZoom', L.Map.DoubleClickZoom);
-
-
-/*
- * L.Handler.ScrollWheelZoom is used by L.Map to enable mouse scroll wheel zoom on the map.
- */
-
-L.Map.mergeOptions({
-	scrollWheelZoom: true
-});
-
-L.Map.ScrollWheelZoom = L.Handler.extend({
-	addHooks: function () {
-		L.DomEvent.on(this._map._container, 'mousewheel', this._onWheelScroll, this);
-		L.DomEvent.on(this._map._container, 'MozMousePixelScroll', L.DomEvent.preventDefault);
-		this._delta = 0;
-	},
-
-	removeHooks: function () {
-		L.DomEvent.off(this._map._container, 'mousewheel', this._onWheelScroll);
-		L.DomEvent.off(this._map._container, 'MozMousePixelScroll', L.DomEvent.preventDefault);
-	},
-
-	_onWheelScroll: function (e) {
-		var delta = L.DomEvent.getWheelDelta(e);
-
-		this._delta += delta;
-		this._lastMousePos = this._map.mouseEventToContainerPoint(e);
-
-		if (!this._startTime) {
-			this._startTime = +new Date();
-		}
-
-		var left = Math.max(40 - (+new Date() - this._startTime), 0);
-
-		clearTimeout(this._timer);
-		this._timer = setTimeout(L.bind(this._performZoom, this), left);
-
-		L.DomEvent.preventDefault(e);
-		L.DomEvent.stopPropagation(e);
-	},
-
-	_performZoom: function () {
-		var map = this._map,
-		    delta = this._delta,
-		    zoom = map.getZoom();
-
-		delta = delta > 0 ? Math.ceil(delta) : Math.floor(delta);
-		delta = Math.max(Math.min(delta, 4), -4);
-		delta = map._limitZoom(zoom + delta) - zoom;
-
-		this._delta = 0;
-		this._startTime = null;
-
-		if (!delta) { return; }
-
-		if (map.options.scrollWheelZoom === 'center') {
-			map.setZoom(zoom + delta);
-		} else {
-			map.setZoomAround(this._lastMousePos, zoom + delta);
-		}
-	}
-});
-
-L.Map.addInitHook('addHandler', 'scrollWheelZoom', L.Map.ScrollWheelZoom);
-
-
-/*
- * Extends the event handling code with double tap support for mobile browsers.
- */
-
-L.extend(L.DomEvent, {
-
-	_touchstart: L.Browser.msPointer ? 'MSPointerDown' : L.Browser.pointer ? 'pointerdown' : 'touchstart',
-	_touchend: L.Browser.msPointer ? 'MSPointerUp' : L.Browser.pointer ? 'pointerup' : 'touchend',
-
-	// inspired by Zepto touch code by Thomas Fuchs
-	addDoubleTapListener: function (obj, handler, id) {
-		var last,
-		    doubleTap = false,
-		    delay = 250,
-		    touch,
-		    pre = '_leaflet_',
-		    touchstart = this._touchstart,
-		    touchend = this._touchend,
-		    trackedTouches = [];
-
-		function onTouchStart(e) {
-			var count;
-
-			if (L.Browser.pointer) {
-				trackedTouches.push(e.pointerId);
-				count = trackedTouches.length;
-			} else {
-				count = e.touches.length;
-			}
-			if (count > 1) {
-				return;
-			}
-
-			var now = Date.now(),
-				delta = now - (last || now);
-
-			touch = e.touches ? e.touches[0] : e;
-			doubleTap = (delta > 0 && delta <= delay);
-			last = now;
-		}
-
-		function onTouchEnd(e) {
-			if (L.Browser.pointer) {
-				var idx = trackedTouches.indexOf(e.pointerId);
-				if (idx === -1) {
-					return;
-				}
-				trackedTouches.splice(idx, 1);
-			}
-
-			if (doubleTap) {
-				if (L.Browser.pointer) {
-					// work around .type being readonly with MSPointer* events
-					var newTouch = { },
-						prop;
-
-					// jshint forin:false
-					for (var i in touch) {
-						prop = touch[i];
-						if (typeof prop === 'function') {
-							newTouch[i] = prop.bind(touch);
-						} else {
-							newTouch[i] = prop;
-						}
-					}
-					touch = newTouch;
-				}
-				touch.type = 'dblclick';
-				handler(touch);
-				last = null;
-			}
-		}
-		obj[pre + touchstart + id] = onTouchStart;
-		obj[pre + touchend + id] = onTouchEnd;
-
-		// on pointer we need to listen on the document, otherwise a drag starting on the map and moving off screen
-		// will not come through to us, so we will lose track of how many touches are ongoing
-		var endElement = L.Browser.pointer ? document.documentElement : obj;
-
-		obj.addEventListener(touchstart, onTouchStart, false);
-		endElement.addEventListener(touchend, onTouchEnd, false);
-
-		if (L.Browser.pointer) {
-			endElement.addEventListener(L.DomEvent.POINTER_CANCEL, onTouchEnd, false);
-		}
-
-		return this;
-	},
-
-	removeDoubleTapListener: function (obj, id) {
-		var pre = '_leaflet_';
-
-		obj.removeEventListener(this._touchstart, obj[pre + this._touchstart + id], false);
-		(L.Browser.pointer ? document.documentElement : obj).removeEventListener(
-		        this._touchend, obj[pre + this._touchend + id], false);
-
-		if (L.Browser.pointer) {
-			document.documentElement.removeEventListener(L.DomEvent.POINTER_CANCEL, obj[pre + this._touchend + id],
-				false);
-		}
-
-		return this;
-	}
-});
-
-
-/*
- * Extends L.DomEvent to provide touch support for Internet Explorer and Windows-based devices.
- */
-
-L.extend(L.DomEvent, {
-
-	//static
-	POINTER_DOWN: L.Browser.msPointer ? 'MSPointerDown' : 'pointerdown',
-	POINTER_MOVE: L.Browser.msPointer ? 'MSPointerMove' : 'pointermove',
-	POINTER_UP: L.Browser.msPointer ? 'MSPointerUp' : 'pointerup',
-	POINTER_CANCEL: L.Browser.msPointer ? 'MSPointerCancel' : 'pointercancel',
-
-	_pointers: [],
-	_pointerDocumentListener: false,
-
-	// Provides a touch events wrapper for (ms)pointer events.
-	// Based on changes by veproza https://github.com/CloudMade/Leaflet/pull/1019
-	//ref http://www.w3.org/TR/pointerevents/ https://www.w3.org/Bugs/Public/show_bug.cgi?id=22890
-
-	addPointerListener: function (obj, type, handler, id) {
-
-		switch (type) {
-		case 'touchstart':
-			return this.addPointerListenerStart(obj, type, handler, id);
-		case 'touchend':
-			return this.addPointerListenerEnd(obj, type, handler, id);
-		case 'touchmove':
-			return this.addPointerListenerMove(obj, type, handler, id);
-		default:
-			throw 'Unknown touch event type';
-		}
-	},
-
-	addPointerListenerStart: function (obj, type, handler, id) {
-		var pre = '_leaflet_',
-		    pointers = this._pointers;
-
-		var cb = function (e) {
-
-			L.DomEvent.preventDefault(e);
-
-			var alreadyInArray = false;
-			for (var i = 0; i < pointers.length; i++) {
-				if (pointers[i].pointerId === e.pointerId) {
-					alreadyInArray = true;
-					break;
-				}
-			}
-			if (!alreadyInArray) {
-				pointers.push(e);
-			}
-
-			e.touches = pointers.slice();
-			e.changedTouches = [e];
-
-			handler(e);
-		};
-
-		obj[pre + 'touchstart' + id] = cb;
-		obj.addEventListener(this.POINTER_DOWN, cb, false);
-
-		// need to also listen for end events to keep the _pointers list accurate
-		// this needs to be on the body and never go away
-		if (!this._pointerDocumentListener) {
-			var internalCb = function (e) {
-				for (var i = 0; i < pointers.length; i++) {
-					if (pointers[i].pointerId === e.pointerId) {
-						pointers.splice(i, 1);
-						break;
-					}
-				}
-			};
-			//We listen on the documentElement as any drags that end by moving the touch off the screen get fired there
-			document.documentElement.addEventListener(this.POINTER_UP, internalCb, false);
-			document.documentElement.addEventListener(this.POINTER_CANCEL, internalCb, false);
-
-			this._pointerDocumentListener = true;
-		}
-
-		return this;
-	},
-
-	addPointerListenerMove: function (obj, type, handler, id) {
-		var pre = '_leaflet_',
-		    touches = this._pointers;
-
-		function cb(e) {
-
-			// don't fire touch moves when mouse isn't down
-			if ((e.pointerType === e.MSPOINTER_TYPE_MOUSE || e.pointerType === 'mouse') && e.buttons === 0) { return; }
-
-			for (var i = 0; i < touches.length; i++) {
-				if (touches[i].pointerId === e.pointerId) {
-					touches[i] = e;
-					break;
-				}
-			}
-
-			e.touches = touches.slice();
-			e.changedTouches = [e];
-
-			handler(e);
-		}
-
-		obj[pre + 'touchmove' + id] = cb;
-		obj.addEventListener(this.POINTER_MOVE, cb, false);
-
-		return this;
-	},
-
-	addPointerListenerEnd: function (obj, type, handler, id) {
-		var pre = '_leaflet_',
-		    touches = this._pointers;
-
-		var cb = function (e) {
-			for (var i = 0; i < touches.length; i++) {
-				if (touches[i].pointerId === e.pointerId) {
-					touches.splice(i, 1);
-					break;
-				}
-			}
-
-			e.touches = touches.slice();
-			e.changedTouches = [e];
-
-			handler(e);
-		};
-
-		obj[pre + 'touchend' + id] = cb;
-		obj.addEventListener(this.POINTER_UP, cb, false);
-		obj.addEventListener(this.POINTER_CANCEL, cb, false);
-
-		return this;
-	},
-
-	removePointerListener: function (obj, type, id) {
-		var pre = '_leaflet_',
-		    cb = obj[pre + type + id];
-
-		switch (type) {
-		case 'touchstart':
-			obj.removeEventListener(this.POINTER_DOWN, cb, false);
-			break;
-		case 'touchmove':
-			obj.removeEventListener(this.POINTER_MOVE, cb, false);
-			break;
-		case 'touchend':
-			obj.removeEventListener(this.POINTER_UP, cb, false);
-			obj.removeEventListener(this.POINTER_CANCEL, cb, false);
-			break;
-		}
-
-		return this;
-	}
-});
-
-
-/*
- * L.Handler.TouchZoom is used by L.Map to add pinch zoom on supported mobile browsers.
- */
-
-L.Map.mergeOptions({
-	touchZoom: L.Browser.touch && !L.Browser.android23,
-	bounceAtZoomLimits: true
-});
-
-L.Map.TouchZoom = L.Handler.extend({
-	addHooks: function () {
-		L.DomEvent.on(this._map._container, 'touchstart', this._onTouchStart, this);
-	},
-
-	removeHooks: function () {
-		L.DomEvent.off(this._map._container, 'touchstart', this._onTouchStart, this);
-	},
-
-	_onTouchStart: function (e) {
-		var map = this._map;
-
-		if (!e.touches || e.touches.length !== 2 || map._animatingZoom || this._zooming) { return; }
-
-		var p1 = map.mouseEventToLayerPoint(e.touches[0]),
-		    p2 = map.mouseEventToLayerPoint(e.touches[1]),
-		    viewCenter = map._getCenterLayerPoint();
-
-		this._startCenter = p1.add(p2)._divideBy(2);
-		this._startDist = p1.distanceTo(p2);
-
-		this._moved = false;
-		this._zooming = true;
-
-		this._centerOffset = viewCenter.subtract(this._startCenter);
-
-		if (map._panAnim) {
-			map._panAnim.stop();
-		}
-
-		L.DomEvent
-		    .on(document, 'touchmove', this._onTouchMove, this)
-		    .on(document, 'touchend', this._onTouchEnd, this);
-
-		L.DomEvent.preventDefault(e);
-	},
-
-	_onTouchMove: function (e) {
-		var map = this._map;
-
-		if (!e.touches || e.touches.length !== 2 || !this._zooming) { return; }
-
-		var p1 = map.mouseEventToLayerPoint(e.touches[0]),
-		    p2 = map.mouseEventToLayerPoint(e.touches[1]);
-
-		this._scale = p1.distanceTo(p2) / this._startDist;
-		this._delta = p1._add(p2)._divideBy(2)._subtract(this._startCenter);
-
-		if (this._scale === 1) { return; }
-
-		if (!map.options.bounceAtZoomLimits) {
-			if ((map.getZoom() === map.getMinZoom() && this._scale < 1) ||
-			    (map.getZoom() === map.getMaxZoom() && this._scale > 1)) { return; }
-		}
-
-		if (!this._moved) {
-			L.DomUtil.addClass(map._mapPane, 'leaflet-touching');
-
-			map
-			    .fire('movestart')
-			    .fire('zoomstart');
-
-			this._moved = true;
-		}
-
-		L.Util.cancelAnimFrame(this._animRequest);
-		this._animRequest = L.Util.requestAnimFrame(
-		        this._updateOnMove, this, true, this._map._container);
-
-		L.DomEvent.preventDefault(e);
-	},
-
-	_updateOnMove: function () {
-		var map = this._map,
-		    origin = this._getScaleOrigin(),
-		    center = map.layerPointToLatLng(origin),
-		    zoom = map.getScaleZoom(this._scale);
-
-		map._animateZoom(center, zoom, this._startCenter, this._scale, this._delta, false, true);
-	},
-
-	_onTouchEnd: function () {
-		if (!this._moved || !this._zooming) {
-			this._zooming = false;
-			return;
-		}
-
-		var map = this._map;
-
-		this._zooming = false;
-		L.DomUtil.removeClass(map._mapPane, 'leaflet-touching');
-		L.Util.cancelAnimFrame(this._animRequest);
-
-		L.DomEvent
-		    .off(document, 'touchmove', this._onTouchMove)
-		    .off(document, 'touchend', this._onTouchEnd);
-
-		var origin = this._getScaleOrigin(),
-		    center = map.layerPointToLatLng(origin),
-
-		    oldZoom = map.getZoom(),
-		    floatZoomDelta = map.getScaleZoom(this._scale) - oldZoom,
-		    roundZoomDelta = (floatZoomDelta > 0 ?
-		            Math.ceil(floatZoomDelta) : Math.floor(floatZoomDelta)),
-
-		    zoom = map._limitZoom(oldZoom + roundZoomDelta),
-		    scale = map.getZoomScale(zoom) / this._scale;
-
-		map._animateZoom(center, zoom, origin, scale);
-	},
-
-	_getScaleOrigin: function () {
-		var centerOffset = this._centerOffset.subtract(this._delta).divideBy(this._scale);
-		return this._startCenter.add(centerOffset);
-	}
-});
-
-L.Map.addInitHook('addHandler', 'touchZoom', L.Map.TouchZoom);
-
-
-/*
- * L.Map.Tap is used to enable mobile hacks like quick taps and long hold.
- */
-
-L.Map.mergeOptions({
-	tap: true,
-	tapTolerance: 15
-});
-
-L.Map.Tap = L.Handler.extend({
-	addHooks: function () {
-		L.DomEvent.on(this._map._container, 'touchstart', this._onDown, this);
-	},
-
-	removeHooks: function () {
-		L.DomEvent.off(this._map._container, 'touchstart', this._onDown, this);
-	},
-
-	_onDown: function (e) {
-		if (!e.touches) { return; }
-
-		L.DomEvent.preventDefault(e);
-
-		this._fireClick = true;
-
-		// don't simulate click or track longpress if more than 1 touch
-		if (e.touches.length > 1) {
-			this._fireClick = false;
-			clearTimeout(this._holdTimeout);
-			return;
-		}
-
-		var first = e.touches[0],
-		    el = first.target;
-
-		this._startPos = this._newPos = new L.Point(first.clientX, first.clientY);
-
-		// if touching a link, highlight it
-		if (el.tagName && el.tagName.toLowerCase() === 'a') {
-			L.DomUtil.addClass(el, 'leaflet-active');
-		}
-
-		// simulate long hold but setting a timeout
-		this._holdTimeout = setTimeout(L.bind(function () {
-			if (this._isTapValid()) {
-				this._fireClick = false;
-				this._onUp();
-				this._simulateEvent('contextmenu', first);
-			}
-		}, this), 1000);
-
-		L.DomEvent
-			.on(document, 'touchmove', this._onMove, this)
-			.on(document, 'touchend', this._onUp, this);
-	},
-
-	_onUp: function (e) {
-		clearTimeout(this._holdTimeout);
-
-		L.DomEvent
-			.off(document, 'touchmove', this._onMove, this)
-			.off(document, 'touchend', this._onUp, this);
-
-		if (this._fireClick && e && e.changedTouches) {
-
-			var first = e.changedTouches[0],
-			    el = first.target;
-
-			if (el && el.tagName && el.tagName.toLowerCase() === 'a') {
-				L.DomUtil.removeClass(el, 'leaflet-active');
-			}
-
-			// simulate click if the touch didn't move too much
-			if (this._isTapValid()) {
-				this._simulateEvent('click', first);
-			}
-		}
-	},
-
-	_isTapValid: function () {
-		return this._newPos.distanceTo(this._startPos) <= this._map.options.tapTolerance;
-	},
-
-	_onMove: function (e) {
-		var first = e.touches[0];
-		this._newPos = new L.Point(first.clientX, first.clientY);
-	},
-
-	_simulateEvent: function (type, e) {
-		var simulatedEvent = document.createEvent('MouseEvents');
-
-		simulatedEvent._simulated = true;
-		e.target._simulatedClick = true;
-
-		simulatedEvent.initMouseEvent(
-		        type, true, true, window, 1,
-		        e.screenX, e.screenY,
-		        e.clientX, e.clientY,
-		        false, false, false, false, 0, null);
-
-		e.target.dispatchEvent(simulatedEvent);
-	}
-});
-
-if (L.Browser.touch && !L.Browser.pointer) {
-	L.Map.addInitHook('addHandler', 'tap', L.Map.Tap);
-}
-
-
-/*
- * L.Handler.ShiftDragZoom is used to add shift-drag zoom interaction to the map
-  * (zoom to a selected bounding box), enabled by default.
- */
-
-L.Map.mergeOptions({
-	boxZoom: true
-});
-
-L.Map.BoxZoom = L.Handler.extend({
-	initialize: function (map) {
-		this._map = map;
-		this._container = map._container;
-		this._pane = map._panes.overlayPane;
-		this._moved = false;
-	},
-
-	addHooks: function () {
-		L.DomEvent.on(this._container, 'mousedown', this._onMouseDown, this);
-	},
-
-	removeHooks: function () {
-		L.DomEvent.off(this._container, 'mousedown', this._onMouseDown);
-		this._moved = false;
-	},
-
-	moved: function () {
-		return this._moved;
-	},
-
-	_onMouseDown: function (e) {
-		this._moved = false;
-
-		if (!e.shiftKey || ((e.which !== 1) && (e.button !== 1))) { return false; }
-
-		L.DomUtil.disableTextSelection();
-		L.DomUtil.disableImageDrag();
-
-		this._startLayerPoint = this._map.mouseEventToLayerPoint(e);
-
-		L.DomEvent
-		    .on(document, 'mousemove', this._onMouseMove, this)
-		    .on(document, 'mouseup', this._onMouseUp, this)
-		    .on(document, 'keydown', this._onKeyDown, this);
-	},
-
-	_onMouseMove: function (e) {
-		if (!this._moved) {
-			this._box = L.DomUtil.create('div', 'leaflet-zoom-box', this._pane);
-			L.DomUtil.setPosition(this._box, this._startLayerPoint);
-
-			//TODO refactor: move cursor to styles
-			this._container.style.cursor = 'crosshair';
-			this._map.fire('boxzoomstart');
-		}
-
-		var startPoint = this._startLayerPoint,
-		    box = this._box,
-
-		    layerPoint = this._map.mouseEventToLayerPoint(e),
-		    offset = layerPoint.subtract(startPoint),
-
-		    newPos = new L.Point(
-		        Math.min(layerPoint.x, startPoint.x),
-		        Math.min(layerPoint.y, startPoint.y));
-
-		L.DomUtil.setPosition(box, newPos);
-
-		this._moved = true;
-
-		// TODO refactor: remove hardcoded 4 pixels
-		box.style.width  = (Math.max(0, Math.abs(offset.x) - 4)) + 'px';
-		box.style.height = (Math.max(0, Math.abs(offset.y) - 4)) + 'px';
-	},
-
-	_finish: function () {
-		if (this._moved) {
-			this._pane.removeChild(this._box);
-			this._container.style.cursor = '';
-		}
-
-		L.DomUtil.enableTextSelection();
-		L.DomUtil.enableImageDrag();
-
-		L.DomEvent
-		    .off(document, 'mousemove', this._onMouseMove)
-		    .off(document, 'mouseup', this._onMouseUp)
-		    .off(document, 'keydown', this._onKeyDown);
-	},
-
-	_onMouseUp: function (e) {
-
-		this._finish();
-
-		var map = this._map,
-		    layerPoint = map.mouseEventToLayerPoint(e);
-
-		if (this._startLayerPoint.equals(layerPoint)) { return; }
-
-		var bounds = new L.LatLngBounds(
-		        map.layerPointToLatLng(this._startLayerPoint),
-		        map.layerPointToLatLng(layerPoint));
-
-		map.fitBounds(bounds);
-
-		map.fire('boxzoomend', {
-			boxZoomBounds: bounds
-		});
-	},
-
-	_onKeyDown: function (e) {
-		if (e.keyCode === 27) {
-			this._finish();
-		}
-	}
-});
-
-L.Map.addInitHook('addHandler', 'boxZoom', L.Map.BoxZoom);
-
-
-/*
- * L.Map.Keyboard is handling keyboard interaction with the map, enabled by default.
- */
-
-L.Map.mergeOptions({
-	keyboard: true,
-	keyboardPanOffset: 80,
-	keyboardZoomOffset: 1
-});
-
-L.Map.Keyboard = L.Handler.extend({
-
-	keyCodes: {
-		left:    [37],
-		right:   [39],
-		down:    [40],
-		up:      [38],
-		zoomIn:  [187, 107, 61, 171],
-		zoomOut: [189, 109, 173]
-	},
-
-	initialize: function (map) {
-		this._map = map;
-
-		this._setPanOffset(map.options.keyboardPanOffset);
-		this._setZoomOffset(map.options.keyboardZoomOffset);
-	},
-
-	addHooks: function () {
-		var container = this._map._container;
-
-		// make the container focusable by tabbing
-		if (container.tabIndex === -1) {
-			container.tabIndex = '0';
-		}
-
-		L.DomEvent
-		    .on(container, 'focus', this._onFocus, this)
-		    .on(container, 'blur', this._onBlur, this)
-		    .on(container, 'mousedown', this._onMouseDown, this);
-
-		this._map
-		    .on('focus', this._addHooks, this)
-		    .on('blur', this._removeHooks, this);
-	},
-
-	removeHooks: function () {
-		this._removeHooks();
-
-		var container = this._map._container;
-
-		L.DomEvent
-		    .off(container, 'focus', this._onFocus, this)
-		    .off(container, 'blur', this._onBlur, this)
-		    .off(container, 'mousedown', this._onMouseDown, this);
-
-		this._map
-		    .off('focus', this._addHooks, this)
-		    .off('blur', this._removeHooks, this);
-	},
-
-	_onMouseDown: function () {
-		if (this._focused) { return; }
-
-		var body = document.body,
-		    docEl = document.documentElement,
-		    top = body.scrollTop || docEl.scrollTop,
-		    left = body.scrollLeft || docEl.scrollLeft;
-
-		this._map._container.focus();
-
-		window.scrollTo(left, top);
-	},
-
-	_onFocus: function () {
-		this._focused = true;
-		this._map.fire('focus');
-	},
-
-	_onBlur: function () {
-		this._focused = false;
-		this._map.fire('blur');
-	},
-
-	_setPanOffset: function (pan) {
-		var keys = this._panKeys = {},
-		    codes = this.keyCodes,
-		    i, len;
-
-		for (i = 0, len = codes.left.length; i < len; i++) {
-			keys[codes.left[i]] = [-1 * pan, 0];
-		}
-		for (i = 0, len = codes.right.length; i < len; i++) {
-			keys[codes.right[i]] = [pan, 0];
-		}
-		for (i = 0, len = codes.down.length; i < len; i++) {
-			keys[codes.down[i]] = [0, pan];
-		}
-		for (i = 0, len = codes.up.length; i < len; i++) {
-			keys[codes.up[i]] = [0, -1 * pan];
-		}
-	},
-
-	_setZoomOffset: function (zoom) {
-		var keys = this._zoomKeys = {},
-		    codes = this.keyCodes,
-		    i, len;
-
-		for (i = 0, len = codes.zoomIn.length; i < len; i++) {
-			keys[codes.zoomIn[i]] = zoom;
-		}
-		for (i = 0, len = codes.zoomOut.length; i < len; i++) {
-			keys[codes.zoomOut[i]] = -zoom;
-		}
-	},
-
-	_addHooks: function () {
-		L.DomEvent.on(document, 'keydown', this._onKeyDown, this);
-	},
-
-	_removeHooks: function () {
-		L.DomEvent.off(document, 'keydown', this._onKeyDown, this);
-	},
-
-	_onKeyDown: function (e) {
-		var key = e.keyCode,
-		    map = this._map;
-
-		if (key in this._panKeys) {
-
-			if (map._panAnim && map._panAnim._inProgress) { return; }
-
-			map.panBy(this._panKeys[key]);
-
-			if (map.options.maxBounds) {
-				map.panInsideBounds(map.options.maxBounds);
-			}
-
-		} else if (key in this._zoomKeys) {
-			map.setZoom(map.getZoom() + this._zoomKeys[key]);
-
-		} else {
-			return;
-		}
-
-		L.DomEvent.stop(e);
-	}
-});
-
-L.Map.addInitHook('addHandler', 'keyboard', L.Map.Keyboard);
-
-
-/*
- * L.Handler.MarkerDrag is used internally by L.Marker to make the markers draggable.
- */
-
-L.Handler.MarkerDrag = L.Handler.extend({
-	initialize: function (marker) {
-		this._marker = marker;
-	},
-
-	addHooks: function () {
-		var icon = this._marker._icon;
-		if (!this._draggable) {
-			this._draggable = new L.Draggable(icon, icon);
-		}
-
-		this._draggable
-			.on('dragstart', this._onDragStart, this)
-			.on('drag', this._onDrag, this)
-			.on('dragend', this._onDragEnd, this);
-		this._draggable.enable();
-		L.DomUtil.addClass(this._marker._icon, 'leaflet-marker-draggable');
-	},
-
-	removeHooks: function () {
-		this._draggable
-			.off('dragstart', this._onDragStart, this)
-			.off('drag', this._onDrag, this)
-			.off('dragend', this._onDragEnd, this);
-
-		this._draggable.disable();
-		L.DomUtil.removeClass(this._marker._icon, 'leaflet-marker-draggable');
-	},
-
-	moved: function () {
-		return this._draggable && this._draggable._moved;
-	},
-
-	_onDragStart: function () {
-		this._marker
-		    .closePopup()
-		    .fire('movestart')
-		    .fire('dragstart');
-	},
-
-	_onDrag: function () {
-		var marker = this._marker,
-		    shadow = marker._shadow,
-		    iconPos = L.DomUtil.getPosition(marker._icon),
-		    latlng = marker._map.layerPointToLatLng(iconPos);
-
-		// update shadow position
-		if (shadow) {
-			L.DomUtil.setPosition(shadow, iconPos);
-		}
-
-		marker._latlng = latlng;
-
-		marker
-		    .fire('move', {latlng: latlng})
-		    .fire('drag');
-	},
-
-	_onDragEnd: function (e) {
-		this._marker
-		    .fire('moveend')
-		    .fire('dragend', e);
-	}
-});
-
-
-/*
- * L.Control is a base class for implementing map controls. Handles positioning.
- * All other controls extend from this class.
- */
-
-L.Control = L.Class.extend({
-	options: {
-		position: 'topright'
-	},
-
-	initialize: function (options) {
-		L.setOptions(this, options);
-	},
-
-	getPosition: function () {
-		return this.options.position;
-	},
-
-	setPosition: function (position) {
-		var map = this._map;
-
-		if (map) {
-			map.removeControl(this);
-		}
-
-		this.options.position = position;
-
-		if (map) {
-			map.addControl(this);
-		}
-
-		return this;
-	},
-
-	getContainer: function () {
-		return this._container;
-	},
-
-	addTo: function (map) {
-		this._map = map;
-
-		var container = this._container = this.onAdd(map),
-		    pos = this.getPosition(),
-		    corner = map._controlCorners[pos];
-
-		L.DomUtil.addClass(container, 'leaflet-control');
-
-		if (pos.indexOf('bottom') !== -1) {
-			corner.insertBefore(container, corner.firstChild);
-		} else {
-			corner.appendChild(container);
-		}
-
-		return this;
-	},
-
-	removeFrom: function (map) {
-		var pos = this.getPosition(),
-		    corner = map._controlCorners[pos];
-
-		corner.removeChild(this._container);
-		this._map = null;
-
-		if (this.onRemove) {
-			this.onRemove(map);
-		}
-
-		return this;
-	},
-
-	_refocusOnMap: function () {
-		if (this._map) {
-			this._map.getContainer().focus();
-		}
-	}
-});
-
-L.control = function (options) {
-	return new L.Control(options);
-};
-
-
-// adds control-related methods to L.Map
-
-L.Map.include({
-	addControl: function (control) {
-		control.addTo(this);
-		return this;
-	},
-
-	removeControl: function (control) {
-		control.removeFrom(this);
-		return this;
-	},
-
-	_initControlPos: function () {
-		var corners = this._controlCorners = {},
-		    l = 'leaflet-',
-		    container = this._controlContainer =
-		            L.DomUtil.create('div', l + 'control-container', this._container);
-
-		function createCorner(vSide, hSide) {
-			var className = l + vSide + ' ' + l + hSide;
-
-			corners[vSide + hSide] = L.DomUtil.create('div', className, container);
-		}
-
-		createCorner('top', 'left');
-		createCorner('top', 'right');
-		createCorner('bottom', 'left');
-		createCorner('bottom', 'right');
-	},
-
-	_clearControlPos: function () {
-		this._container.removeChild(this._controlContainer);
-	}
-});
-
-
-/*
- * L.Control.Zoom is used for the default zoom buttons on the map.
- */
-
-L.Control.Zoom = L.Control.extend({
-	options: {
-		position: 'topleft',
-		zoomInText: '+',
-		zoomInTitle: 'Zoom in',
-		zoomOutText: '-',
-		zoomOutTitle: 'Zoom out'
-	},
-
-	onAdd: function (map) {
-		var zoomName = 'leaflet-control-zoom',
-		    container = L.DomUtil.create('div', zoomName + ' leaflet-bar');
-
-		this._map = map;
-
-		this._zoomInButton  = this._createButton(
-		        this.options.zoomInText, this.options.zoomInTitle,
-		        zoomName + '-in',  container, this._zoomIn,  this);
-		this._zoomOutButton = this._createButton(
-		        this.options.zoomOutText, this.options.zoomOutTitle,
-		        zoomName + '-out', container, this._zoomOut, this);
-
-		this._updateDisabled();
-		map.on('zoomend zoomlevelschange', this._updateDisabled, this);
-
-		return container;
-	},
-
-	onRemove: function (map) {
-		map.off('zoomend zoomlevelschange', this._updateDisabled, this);
-	},
-
-	_zoomIn: function (e) {
-		this._map.zoomIn(e.shiftKey ? 3 : 1);
-	},
-
-	_zoomOut: function (e) {
-		this._map.zoomOut(e.shiftKey ? 3 : 1);
-	},
-
-	_createButton: function (html, title, className, container, fn, context) {
-		var link = L.DomUtil.create('a', className, container);
-		link.innerHTML = html;
-		link.href = '#';
-		link.title = title;
-
-		var stop = L.DomEvent.stopPropagation;
-
-		L.DomEvent
-		    .on(link, 'click', stop)
-		    .on(link, 'mousedown', stop)
-		    .on(link, 'dblclick', stop)
-		    .on(link, 'click', L.DomEvent.preventDefault)
-		    .on(link, 'click', fn, context)
-		    .on(link, 'click', this._refocusOnMap, context);
-
-		return link;
-	},
-
-	_updateDisabled: function () {
-		var map = this._map,
-			className = 'leaflet-disabled';
-
-		L.DomUtil.removeClass(this._zoomInButton, className);
-		L.DomUtil.removeClass(this._zoomOutButton, className);
-
-		if (map._zoom === map.getMinZoom()) {
-			L.DomUtil.addClass(this._zoomOutButton, className);
-		}
-		if (map._zoom === map.getMaxZoom()) {
-			L.DomUtil.addClass(this._zoomInButton, className);
-		}
-	}
-});
-
-L.Map.mergeOptions({
-	zoomControl: true
-});
-
-L.Map.addInitHook(function () {
-	if (this.options.zoomControl) {
-		this.zoomControl = new L.Control.Zoom();
-		this.addControl(this.zoomControl);
-	}
-});
-
-L.control.zoom = function (options) {
-	return new L.Control.Zoom(options);
-};
-
-
-
-/*
- * L.Control.Attribution is used for displaying attribution on the map (added by default).
- */
-
-L.Control.Attribution = L.Control.extend({
-	options: {
-		position: 'bottomright',
-		prefix: '<a href="http://leafletjs.com" title="A JS library for interactive maps">Leaflet</a>'
-	},
-
-	initialize: function (options) {
-		L.setOptions(this, options);
-
-		this._attributions = {};
-	},
-
-	onAdd: function (map) {
-		this._container = L.DomUtil.create('div', 'leaflet-control-attribution');
-		L.DomEvent.disableClickPropagation(this._container);
-
-		for (var i in map._layers) {
-			if (map._layers[i].getAttribution) {
-				this.addAttribution(map._layers[i].getAttribution());
-			}
-		}
-		
-		map
-		    .on('layeradd', this._onLayerAdd, this)
-		    .on('layerremove', this._onLayerRemove, this);
-
-		this._update();
-
-		return this._container;
-	},
-
-	onRemove: function (map) {
-		map
-		    .off('layeradd', this._onLayerAdd)
-		    .off('layerremove', this._onLayerRemove);
-
-	},
-
-	setPrefix: function (prefix) {
-		this.options.prefix = prefix;
-		this._update();
-		return this;
-	},
-
-	addAttribution: function (text) {
-		if (!text) { return; }
-
-		if (!this._attributions[text]) {
-			this._attributions[text] = 0;
-		}
-		this._attributions[text]++;
-
-		this._update();
-
-		return this;
-	},
-
-	removeAttribution: function (text) {
-		if (!text) { return; }
-
-		if (this._attributions[text]) {
-			this._attributions[text]--;
-			this._update();
-		}
-
-		return this;
-	},
-
-	_update: function () {
-		if (!this._map) { return; }
-
-		var attribs = [];
-
-		for (var i in this._attributions) {
-			if (this._attributions[i]) {
-				attribs.push(i);
-			}
-		}
-
-		var prefixAndAttribs = [];
-
-		if (this.options.prefix) {
-			prefixAndAttribs.push(this.options.prefix);
-		}
-		if (attribs.length) {
-			prefixAndAttribs.push(attribs.join(', '));
-		}
-
-		this._container.innerHTML = prefixAndAttribs.join(' | ');
-	},
-
-	_onLayerAdd: function (e) {
-		if (e.layer.getAttribution) {
-			this.addAttribution(e.layer.getAttribution());
-		}
-	},
-
-	_onLayerRemove: function (e) {
-		if (e.layer.getAttribution) {
-			this.removeAttribution(e.layer.getAttribution());
-		}
-	}
-});
-
-L.Map.mergeOptions({
-	attributionControl: true
-});
-
-L.Map.addInitHook(function () {
-	if (this.options.attributionControl) {
-		this.attributionControl = (new L.Control.Attribution()).addTo(this);
-	}
-});
-
-L.control.attribution = function (options) {
-	return new L.Control.Attribution(options);
-};
-
-
-/*
- * L.Control.Scale is used for displaying metric/imperial scale on the map.
- */
-
-L.Control.Scale = L.Control.extend({
-	options: {
-		position: 'bottomleft',
-		maxWidth: 100,
-		metric: true,
-		imperial: true,
-		updateWhenIdle: false
-	},
-
-	onAdd: function (map) {
-		this._map = map;
-
-		var className = 'leaflet-control-scale',
-		    container = L.DomUtil.create('div', className),
-		    options = this.options;
-
-		this._addScales(options, className, container);
-
-		map.on(options.updateWhenIdle ? 'moveend' : 'move', this._update, this);
-		map.whenReady(this._update, this);
-
-		return container;
-	},
-
-	onRemove: function (map) {
-		map.off(this.options.updateWhenIdle ? 'moveend' : 'move', this._update, this);
-	},
-
-	_addScales: function (options, className, container) {
-		if (options.metric) {
-			this._mScale = L.DomUtil.create('div', className + '-line', container);
-		}
-		if (options.imperial) {
-			this._iScale = L.DomUtil.create('div', className + '-line', container);
-		}
-	},
-
-	_update: function () {
-		var bounds = this._map.getBounds(),
-		    centerLat = bounds.getCenter().lat,
-		    halfWorldMeters = 6378137 * Math.PI * Math.cos(centerLat * Math.PI / 180),
-		    dist = halfWorldMeters * (bounds.getNorthEast().lng - bounds.getSouthWest().lng) / 180,
-
-		    size = this._map.getSize(),
-		    options = this.options,
-		    maxMeters = 0;
-
-		if (size.x > 0) {
-			maxMeters = dist * (options.maxWidth / size.x);
-		}
-
-		this._updateScales(options, maxMeters);
-	},
-
-	_updateScales: function (options, maxMeters) {
-		if (options.metric && maxMeters) {
-			this._updateMetric(maxMeters);
-		}
-
-		if (options.imperial && maxMeters) {
-			this._updateImperial(maxMeters);
-		}
-	},
-
-	_updateMetric: function (maxMeters) {
-		var meters = this._getRoundNum(maxMeters);
-
-		this._mScale.style.width = this._getScaleWidth(meters / maxMeters) + 'px';
-		this._mScale.innerHTML = meters < 1000 ? meters + ' m' : (meters / 1000) + ' km';
-	},
-
-	_updateImperial: function (maxMeters) {
-		var maxFeet = maxMeters * 3.2808399,
-		    scale = this._iScale,
-		    maxMiles, miles, feet;
-
-		if (maxFeet > 5280) {
-			maxMiles = maxFeet / 5280;
-			miles = this._getRoundNum(maxMiles);
-
-			scale.style.width = this._getScaleWidth(miles / maxMiles) + 'px';
-			scale.innerHTML = miles + ' mi';
-
-		} else {
-			feet = this._getRoundNum(maxFeet);
-
-			scale.style.width = this._getScaleWidth(feet / maxFeet) + 'px';
-			scale.innerHTML = feet + ' ft';
-		}
-	},
-
-	_getScaleWidth: function (ratio) {
-		return Math.round(this.options.maxWidth * ratio) - 10;
-	},
-
-	_getRoundNum: function (num) {
-		var pow10 = Math.pow(10, (Math.floor(num) + '').length - 1),
-		    d = num / pow10;
-
-		d = d >= 10 ? 10 : d >= 5 ? 5 : d >= 3 ? 3 : d >= 2 ? 2 : 1;
-
-		return pow10 * d;
-	}
-});
-
-L.control.scale = function (options) {
-	return new L.Control.Scale(options);
-};
-
-
-/*
- * L.Control.Layers is a control to allow users to switch between different layers on the map.
- */
-
-L.Control.Layers = L.Control.extend({
-	options: {
-		collapsed: true,
-		position: 'topright',
-		autoZIndex: true
-	},
-
-	initialize: function (baseLayers, overlays, options) {
-		L.setOptions(this, options);
-
-		this._layers = {};
-		this._lastZIndex = 0;
-		this._handlingClick = false;
-
-		for (var i in baseLayers) {
-			this._addLayer(baseLayers[i], i);
-		}
-
-		for (i in overlays) {
-			this._addLayer(overlays[i], i, true);
-		}
-	},
-
-	onAdd: function (map) {
-		this._initLayout();
-		this._update();
-
-		map
-		    .on('layeradd', this._onLayerChange, this)
-		    .on('layerremove', this._onLayerChange, this);
-
-		return this._container;
-	},
-
-	onRemove: function (map) {
-		map
-		    .off('layeradd', this._onLayerChange, this)
-		    .off('layerremove', this._onLayerChange, this);
-	},
-
-	addBaseLayer: function (layer, name) {
-		this._addLayer(layer, name);
-		this._update();
-		return this;
-	},
-
-	addOverlay: function (layer, name) {
-		this._addLayer(layer, name, true);
-		this._update();
-		return this;
-	},
-
-	removeLayer: function (layer) {
-		var id = L.stamp(layer);
-		delete this._layers[id];
-		this._update();
-		return this;
-	},
-
-	_initLayout: function () {
-		var className = 'leaflet-control-layers',
-		    container = this._container = L.DomUtil.create('div', className);
-
-		//Makes this work on IE10 Touch devices by stopping it from firing a mouseout event when the touch is released
-		container.setAttribute('aria-haspopup', true);
-
-		if (!L.Browser.touch) {
-			L.DomEvent
-				.disableClickPropagation(container)
-				.disableScrollPropagation(container);
-		} else {
-			L.DomEvent.on(container, 'click', L.DomEvent.stopPropagation);
-		}
-
-		var form = this._form = L.DomUtil.create('form', className + '-list');
-
-		if (this.options.collapsed) {
-			if (!L.Browser.android) {
-				L.DomEvent
-				    .on(container, 'mouseover', this._expand, this)
-				    .on(container, 'mouseout', this._collapse, this);
-			}
-			var link = this._layersLink = L.DomUtil.create('a', className + '-toggle', container);
-			link.href = '#';
-			link.title = 'Layers';
-
-			if (L.Browser.touch) {
-				L.DomEvent
-				    .on(link, 'click', L.DomEvent.stop)
-				    .on(link, 'click', this._expand, this);
-			}
-			else {
-				L.DomEvent.on(link, 'focus', this._expand, this);
-			}
-			//Work around for Firefox android issue https://github.com/Leaflet/Leaflet/issues/2033
-			L.DomEvent.on(form, 'click', function () {
-				setTimeout(L.bind(this._onInputClick, this), 0);
-			}, this);
-
-			this._map.on('click', this._collapse, this);
-			// TODO keyboard accessibility
-		} else {
-			this._expand();
-		}
-
-		this._baseLayersList = L.DomUtil.create('div', className + '-base', form);
-		this._separator = L.DomUtil.create('div', className + '-separator', form);
-		this._overlaysList = L.DomUtil.create('div', className + '-overlays', form);
-
-		container.appendChild(form);
-	},
-
-	_addLayer: function (layer, name, overlay) {
-		var id = L.stamp(layer);
-
-		this._layers[id] = {
-			layer: layer,
-			name: name,
-			overlay: overlay
-		};
-
-		if (this.options.autoZIndex && layer.setZIndex) {
-			this._lastZIndex++;
-			layer.setZIndex(this._lastZIndex);
-		}
-	},
-
-	_update: function () {
-		if (!this._container) {
-			return;
-		}
-
-		this._baseLayersList.innerHTML = '';
-		this._overlaysList.innerHTML = '';
-
-		var baseLayersPresent = false,
-		    overlaysPresent = false,
-		    i, obj;
-
-		for (i in this._layers) {
-			obj = this._layers[i];
-			this._addItem(obj);
-			overlaysPresent = overlaysPresent || obj.overlay;
-			baseLayersPresent = baseLayersPresent || !obj.overlay;
-		}
-
-		this._separator.style.display = overlaysPresent && baseLayersPresent ? '' : 'none';
-	},
-
-	_onLayerChange: function (e) {
-		var obj = this._layers[L.stamp(e.layer)];
-
-		if (!obj) { return; }
-
-		if (!this._handlingClick) {
-			this._update();
-		}
-
-		var type = obj.overlay ?
-			(e.type === 'layeradd' ? 'overlayadd' : 'overlayremove') :
-			(e.type === 'layeradd' ? 'baselayerchange' : null);
-
-		if (type) {
-			this._map.fire(type, obj);
-		}
-	},
-
-	// IE7 bugs out if you create a radio dynamically, so you have to do it this hacky way (see http://bit.ly/PqYLBe)
-	_createRadioElement: function (name, checked) {
-
-		var radioHtml = '<input type="radio" class="leaflet-control-layers-selector" name="' + name + '"';
-		if (checked) {
-			radioHtml += ' checked="checked"';
-		}
-		radioHtml += '/>';
-
-		var radioFragment = document.createElement('div');
-		radioFragment.innerHTML = radioHtml;
-
-		return radioFragment.firstChild;
-	},
-
-	_addItem: function (obj) {
-		var label = document.createElement('label'),
-		    input,
-		    checked = this._map.hasLayer(obj.layer);
-
-		if (obj.overlay) {
-			input = document.createElement('input');
-			input.type = 'checkbox';
-			input.className = 'leaflet-control-layers-selector';
-			input.defaultChecked = checked;
-		} else {
-			input = this._createRadioElement('leaflet-base-layers', checked);
-		}
-
-		input.layerId = L.stamp(obj.layer);
-
-		L.DomEvent.on(input, 'click', this._onInputClick, this);
-
-		var name = document.createElement('span');
-		name.innerHTML = ' ' + obj.name;
-
-		label.appendChild(input);
-		label.appendChild(name);
-
-		var container = obj.overlay ? this._overlaysList : this._baseLayersList;
-		container.appendChild(label);
-
-		return label;
-	},
-
-	_onInputClick: function () {
-		var i, input, obj,
-		    inputs = this._form.getElementsByTagName('input'),
-		    inputsLen = inputs.length;
-
-		this._handlingClick = true;
-
-		for (i = 0; i < inputsLen; i++) {
-			input = inputs[i];
-			obj = this._layers[input.layerId];
-
-			if (input.checked && !this._map.hasLayer(obj.layer)) {
-				this._map.addLayer(obj.layer);
-
-			} else if (!input.checked && this._map.hasLayer(obj.layer)) {
-				this._map.removeLayer(obj.layer);
-			}
-		}
-
-		this._handlingClick = false;
-
-		this._refocusOnMap();
-	},
-
-	_expand: function () {
-		L.DomUtil.addClass(this._container, 'leaflet-control-layers-expanded');
-	},
-
-	_collapse: function () {
-		this._container.className = this._container.className.replace(' leaflet-control-layers-expanded', '');
-	}
-});
-
-L.control.layers = function (baseLayers, overlays, options) {
-	return new L.Control.Layers(baseLayers, overlays, options);
-};
-
-
-/*
- * L.PosAnimation is used by Leaflet internally for pan animations.
- */
-
-L.PosAnimation = L.Class.extend({
-	includes: L.Mixin.Events,
-
-	run: function (el, newPos, duration, easeLinearity) { // (HTMLElement, Point[, Number, Number])
-		this.stop();
-
-		this._el = el;
-		this._inProgress = true;
-		this._newPos = newPos;
-
-		this.fire('start');
-
-		el.style[L.DomUtil.TRANSITION] = 'all ' + (duration || 0.25) +
-		        's cubic-bezier(0,0,' + (easeLinearity || 0.5) + ',1)';
-
-		L.DomEvent.on(el, L.DomUtil.TRANSITION_END, this._onTransitionEnd, this);
-		L.DomUtil.setPosition(el, newPos);
-
-		// toggle reflow, Chrome flickers for some reason if you don't do this
-		L.Util.falseFn(el.offsetWidth);
-
-		// there's no native way to track value updates of transitioned properties, so we imitate this
-		this._stepTimer = setInterval(L.bind(this._onStep, this), 50);
-	},
-
-	stop: function () {
-		if (!this._inProgress) { return; }
-
-		// if we just removed the transition property, the element would jump to its final position,
-		// so we need to make it stay at the current position
-
-		L.DomUtil.setPosition(this._el, this._getPos());
-		this._onTransitionEnd();
-		L.Util.falseFn(this._el.offsetWidth); // force reflow in case we are about to start a new animation
-	},
-
-	_onStep: function () {
-		var stepPos = this._getPos();
-		if (!stepPos) {
-			this._onTransitionEnd();
-			return;
-		}
-		// jshint camelcase: false
-		// make L.DomUtil.getPosition return intermediate position value during animation
-		this._el._leaflet_pos = stepPos;
-
-		this.fire('step');
-	},
-
-	// you can't easily get intermediate values of properties animated with CSS3 Transitions,
-	// we need to parse computed style (in case of transform it returns matrix string)
-
-	_transformRe: /([-+]?(?:\d*\.)?\d+)\D*, ([-+]?(?:\d*\.)?\d+)\D*\)/,
-
-	_getPos: function () {
-		var left, top, matches,
-		    el = this._el,
-		    style = window.getComputedStyle(el);
-
-		if (L.Browser.any3d) {
-			matches = style[L.DomUtil.TRANSFORM].match(this._transformRe);
-			if (!matches) { return; }
-			left = parseFloat(matches[1]);
-			top  = parseFloat(matches[2]);
-		} else {
-			left = parseFloat(style.left);
-			top  = parseFloat(style.top);
-		}
-
-		return new L.Point(left, top, true);
-	},
-
-	_onTransitionEnd: function () {
-		L.DomEvent.off(this._el, L.DomUtil.TRANSITION_END, this._onTransitionEnd, this);
-
-		if (!this._inProgress) { return; }
-		this._inProgress = false;
-
-		this._el.style[L.DomUtil.TRANSITION] = '';
-
-		// jshint camelcase: false
-		// make sure L.DomUtil.getPosition returns the final position value after animation
-		this._el._leaflet_pos = this._newPos;
-
-		clearInterval(this._stepTimer);
-
-		this.fire('step').fire('end');
-	}
-
-});
-
-
-/*
- * Extends L.Map to handle panning animations.
- */
-
-L.Map.include({
-
-	setView: function (center, zoom, options) {
-
-		zoom = zoom === undefined ? this._zoom : this._limitZoom(zoom);
-		center = this._limitCenter(L.latLng(center), zoom, this.options.maxBounds);
-		options = options || {};
-
-		if (this._panAnim) {
-			this._panAnim.stop();
-		}
-
-		if (this._loaded && !options.reset && options !== true) {
-
-			if (options.animate !== undefined) {
-				options.zoom = L.extend({animate: options.animate}, options.zoom);
-				options.pan = L.extend({animate: options.animate}, options.pan);
-			}
-
-			// try animating pan or zoom
-			var animated = (this._zoom !== zoom) ?
-				this._tryAnimatedZoom && this._tryAnimatedZoom(center, zoom, options.zoom) :
-				this._tryAnimatedPan(center, options.pan);
-
-			if (animated) {
-				// prevent resize handler call, the view will refresh after animation anyway
-				clearTimeout(this._sizeTimer);
-				return this;
-			}
-		}
-
-		// animation didn't start, just reset the map view
-		this._resetView(center, zoom);
-
-		return this;
-	},
-
-	panBy: function (offset, options) {
-		offset = L.point(offset).round();
-		options = options || {};
-
-		if (!offset.x && !offset.y) {
-			return this;
-		}
-
-		if (!this._panAnim) {
-			this._panAnim = new L.PosAnimation();
-
-			this._panAnim.on({
-				'step': this._onPanTransitionStep,
-				'end': this._onPanTransitionEnd
-			}, this);
-		}
-
-		// don't fire movestart if animating inertia
-		if (!options.noMoveStart) {
-			this.fire('movestart');
-		}
-
-		// animate pan unless animate: false specified
-		if (options.animate !== false) {
-			L.DomUtil.addClass(this._mapPane, 'leaflet-pan-anim');
-
-			var newPos = this._getMapPanePos().subtract(offset);
-			this._panAnim.run(this._mapPane, newPos, options.duration || 0.25, options.easeLinearity);
-		} else {
-			this._rawPanBy(offset);
-			this.fire('move').fire('moveend');
-		}
-
-		return this;
-	},
-
-	_onPanTransitionStep: function () {
-		this.fire('move');
-	},
-
-	_onPanTransitionEnd: function () {
-		L.DomUtil.removeClass(this._mapPane, 'leaflet-pan-anim');
-		this.fire('moveend');
-	},
-
-	_tryAnimatedPan: function (center, options) {
-		// difference between the new and current centers in pixels
-		var offset = this._getCenterOffset(center)._floor();
-
-		// don't animate too far unless animate: true specified in options
-		if ((options && options.animate) !== true && !this.getSize().contains(offset)) { return false; }
-
-		this.panBy(offset, options);
-
-		return true;
-	}
-});
-
-
-/*
- * L.PosAnimation fallback implementation that powers Leaflet pan animations
- * in browsers that don't support CSS3 Transitions.
- */
-
-L.PosAnimation = L.DomUtil.TRANSITION ? L.PosAnimation : L.PosAnimation.extend({
-
-	run: function (el, newPos, duration, easeLinearity) { // (HTMLElement, Point[, Number, Number])
-		this.stop();
-
-		this._el = el;
-		this._inProgress = true;
-		this._duration = duration || 0.25;
-		this._easeOutPower = 1 / Math.max(easeLinearity || 0.5, 0.2);
-
-		this._startPos = L.DomUtil.getPosition(el);
-		this._offset = newPos.subtract(this._startPos);
-		this._startTime = +new Date();
-
-		this.fire('start');
-
-		this._animate();
-	},
-
-	stop: function () {
-		if (!this._inProgress) { return; }
-
-		this._step();
-		this._complete();
-	},
-
-	_animate: function () {
-		// animation loop
-		this._animId = L.Util.requestAnimFrame(this._animate, this);
-		this._step();
-	},
-
-	_step: function () {
-		var elapsed = (+new Date()) - this._startTime,
-		    duration = this._duration * 1000;
-
-		if (elapsed < duration) {
-			this._runFrame(this._easeOut(elapsed / duration));
-		} else {
-			this._runFrame(1);
-			this._complete();
-		}
-	},
-
-	_runFrame: function (progress) {
-		var pos = this._startPos.add(this._offset.multiplyBy(progress));
-		L.DomUtil.setPosition(this._el, pos);
-
-		this.fire('step');
-	},
-
-	_complete: function () {
-		L.Util.cancelAnimFrame(this._animId);
-
-		this._inProgress = false;
-		this.fire('end');
-	},
-
-	_easeOut: function (t) {
-		return 1 - Math.pow(1 - t, this._easeOutPower);
-	}
-});
-
-
-/*
- * Extends L.Map to handle zoom animations.
- */
-
-L.Map.mergeOptions({
-	zoomAnimation: true,
-	zoomAnimationThreshold: 4
-});
-
-if (L.DomUtil.TRANSITION) {
-
-	L.Map.addInitHook(function () {
-		// don't animate on browsers without hardware-accelerated transitions or old Android/Opera
-		this._zoomAnimated = this.options.zoomAnimation && L.DomUtil.TRANSITION &&
-				L.Browser.any3d && !L.Browser.android23 && !L.Browser.mobileOpera;
-
-		// zoom transitions run with the same duration for all layers, so if one of transitionend events
-		// happens after starting zoom animation (propagating to the map pane), we know that it ended globally
-		if (this._zoomAnimated) {
-			L.DomEvent.on(this._mapPane, L.DomUtil.TRANSITION_END, this._catchTransitionEnd, this);
-		}
-	});
-}
-
-L.Map.include(!L.DomUtil.TRANSITION ? {} : {
-
-	_catchTransitionEnd: function (e) {
-		if (this._animatingZoom && e.propertyName.indexOf('transform') >= 0) {
-			this._onZoomTransitionEnd();
-		}
-	},
-
-	_nothingToAnimate: function () {
-		return !this._container.getElementsByClassName('leaflet-zoom-animated').length;
-	},
-
-	_tryAnimatedZoom: function (center, zoom, options) {
-
-		if (this._animatingZoom) { return true; }
-
-		options = options || {};
-
-		// don't animate if disabled, not supported or zoom difference is too large
-		if (!this._zoomAnimated || options.animate === false || this._nothingToAnimate() ||
-		        Math.abs(zoom - this._zoom) > this.options.zoomAnimationThreshold) { return false; }
-
-		// offset is the pixel coords of the zoom origin relative to the current center
-		var scale = this.getZoomScale(zoom),
-		    offset = this._getCenterOffset(center)._divideBy(1 - 1 / scale),
-			origin = this._getCenterLayerPoint()._add(offset);
-
-		// don't animate if the zoom origin isn't within one screen from the current center, unless forced
-		if (options.animate !== true && !this.getSize().contains(offset)) { return false; }
-
-		this
-		    .fire('movestart')
-		    .fire('zoomstart');
-
-		this._animateZoom(center, zoom, origin, scale, null, true);
-
-		return true;
-	},
-
-	_animateZoom: function (center, zoom, origin, scale, delta, backwards, forTouchZoom) {
-
-		if (!forTouchZoom) {
-			this._animatingZoom = true;
-		}
-
-		// put transform transition on all layers with leaflet-zoom-animated class
-		L.DomUtil.addClass(this._mapPane, 'leaflet-zoom-anim');
-
-		// remember what center/zoom to set after animation
-		this._animateToCenter = center;
-		this._animateToZoom = zoom;
-
-		// disable any dragging during animation
-		if (L.Draggable) {
-			L.Draggable._disabled = true;
-		}
-
-		L.Util.requestAnimFrame(function () {
-			this.fire('zoomanim', {
-				center: center,
-				zoom: zoom,
-				origin: origin,
-				scale: scale,
-				delta: delta,
-				backwards: backwards
-			});
-		}, this);
-	},
-
-	_onZoomTransitionEnd: function () {
-
-		this._animatingZoom = false;
-
-		L.DomUtil.removeClass(this._mapPane, 'leaflet-zoom-anim');
-
-		this._resetView(this._animateToCenter, this._animateToZoom, true, true);
-
-		if (L.Draggable) {
-			L.Draggable._disabled = false;
-		}
-	}
-});
-
-
-/*
-	Zoom animation logic for L.TileLayer.
-*/
-
-L.TileLayer.include({
-	_animateZoom: function (e) {
-		if (!this._animating) {
-			this._animating = true;
-			this._prepareBgBuffer();
-		}
-
-		var bg = this._bgBuffer,
-		    transform = L.DomUtil.TRANSFORM,
-		    initialTransform = e.delta ? L.DomUtil.getTranslateString(e.delta) : bg.style[transform],
-		    scaleStr = L.DomUtil.getScaleString(e.scale, e.origin);
-
-		bg.style[transform] = e.backwards ?
-				scaleStr + ' ' + initialTransform :
-				initialTransform + ' ' + scaleStr;
-	},
-
-	_endZoomAnim: function () {
-		var front = this._tileContainer,
-		    bg = this._bgBuffer;
-
-		front.style.visibility = '';
-		front.parentNode.appendChild(front); // Bring to fore
-
-		// force reflow
-		L.Util.falseFn(bg.offsetWidth);
-
-		this._animating = false;
-	},
-
-	_clearBgBuffer: function () {
-		var map = this._map;
-
-		if (map && !map._animatingZoom && !map.touchZoom._zooming) {
-			this._bgBuffer.innerHTML = '';
-			this._bgBuffer.style[L.DomUtil.TRANSFORM] = '';
-		}
-	},
-
-	_prepareBgBuffer: function () {
-
-		var front = this._tileContainer,
-		    bg = this._bgBuffer;
-
-		// if foreground layer doesn't have many tiles but bg layer does,
-		// keep the existing bg layer and just zoom it some more
-
-		var bgLoaded = this._getLoadedTilesPercentage(bg),
-		    frontLoaded = this._getLoadedTilesPercentage(front);
-
-		if (bg && bgLoaded > 0.5 && frontLoaded < 0.5) {
-
-			front.style.visibility = 'hidden';
-			this._stopLoadingImages(front);
-			return;
-		}
-
-		// prepare the buffer to become the front tile pane
-		bg.style.visibility = 'hidden';
-		bg.style[L.DomUtil.TRANSFORM] = '';
-
-		// switch out the current layer to be the new bg layer (and vice-versa)
-		this._tileContainer = bg;
-		bg = this._bgBuffer = front;
-
-		this._stopLoadingImages(bg);
-
-		//prevent bg buffer from clearing right after zoom
-		clearTimeout(this._clearBgBufferTimer);
-	},
-
-	_getLoadedTilesPercentage: function (container) {
-		var tiles = container.getElementsByTagName('img'),
-		    i, len, count = 0;
-
-		for (i = 0, len = tiles.length; i < len; i++) {
-			if (tiles[i].complete) {
-				count++;
-			}
-		}
-		return count / len;
-	},
-
-	// stops loading all tiles in the background layer
-	_stopLoadingImages: function (container) {
-		var tiles = Array.prototype.slice.call(container.getElementsByTagName('img')),
-		    i, len, tile;
-
-		for (i = 0, len = tiles.length; i < len; i++) {
-			tile = tiles[i];
-
-			if (!tile.complete) {
-				tile.onload = L.Util.falseFn;
-				tile.onerror = L.Util.falseFn;
-				tile.src = L.Util.emptyImageUrl;
-
-				tile.parentNode.removeChild(tile);
-			}
-		}
-	}
-});
-
-
-/*
- * Provides L.Map with convenient shortcuts for using browser geolocation features.
- */
-
-L.Map.include({
-	_defaultLocateOptions: {
-		watch: false,
-		setView: false,
-		maxZoom: Infinity,
-		timeout: 10000,
-		maximumAge: 0,
-		enableHighAccuracy: false
-	},
-
-	locate: function (/*Object*/ options) {
-
-		options = this._locateOptions = L.extend(this._defaultLocateOptions, options);
-
-		if (!navigator.geolocation) {
-			this._handleGeolocationError({
-				code: 0,
-				message: 'Geolocation not supported.'
-			});
-			return this;
-		}
-
-		var onResponse = L.bind(this._handleGeolocationResponse, this),
-			onError = L.bind(this._handleGeolocationError, this);
-
-		if (options.watch) {
-			this._locationWatchId =
-			        navigator.geolocation.watchPosition(onResponse, onError, options);
-		} else {
-			navigator.geolocation.getCurrentPosition(onResponse, onError, options);
-		}
-		return this;
-	},
-
-	stopLocate: function () {
-		if (navigator.geolocation) {
-			navigator.geolocation.clearWatch(this._locationWatchId);
-		}
-		if (this._locateOptions) {
-			this._locateOptions.setView = false;
-		}
-		return this;
-	},
-
-	_handleGeolocationError: function (error) {
-		var c = error.code,
-		    message = error.message ||
-		            (c === 1 ? 'permission denied' :
-		            (c === 2 ? 'position unavailable' : 'timeout'));
-
-		if (this._locateOptions.setView && !this._loaded) {
-			this.fitWorld();
-		}
-
-		this.fire('locationerror', {
-			code: c,
-			message: 'Geolocation error: ' + message + '.'
-		});
-	},
-
-	_handleGeolocationResponse: function (pos) {
-		var lat = pos.coords.latitude,
-		    lng = pos.coords.longitude,
-		    latlng = new L.LatLng(lat, lng),
-
-		    latAccuracy = 180 * pos.coords.accuracy / 40075017,
-		    lngAccuracy = latAccuracy / Math.cos(L.LatLng.DEG_TO_RAD * lat),
-
-		    bounds = L.latLngBounds(
-		            [lat - latAccuracy, lng - lngAccuracy],
-		            [lat + latAccuracy, lng + lngAccuracy]),
-
-		    options = this._locateOptions;
-
-		if (options.setView) {
-			var zoom = Math.min(this.getBoundsZoom(bounds), options.maxZoom);
-			this.setView(latlng, zoom);
-		}
-
-		var data = {
-			latlng: latlng,
-			bounds: bounds,
-			timestamp: pos.timestamp
-		};
-
-		for (var i in pos.coords) {
-			if (typeof pos.coords[i] === 'number') {
-				data[i] = pos.coords[i];
-			}
-		}
-
-		this.fire('locationfound', data);
-	}
-});
-
-
-}(window, document));
-});
-require.register("leaflet.label/leaflet.label-src.js", function(exports, require, module){
+require.register("./local/leaflet.label", function (exports, module) {
 /*
 	Leaflet.label, a plugin that adds labels to markers and vectors for Leaflet powered maps.
 	(c) 2012-2013, Jacob Toye, Smartrak
@@ -29476,7 +21312,8 @@ L.FeatureGroup.include({
 
 }(this, document));
 });
-require.register("handlebars/handlebars-v1.1.2.js", function(exports, require, module){
+
+require.register("./local/handlebars", function (exports, module) {
 /*!
 
  handlebars v1.1.2
@@ -32075,7 +23912,8 @@ var __module0__ = (function(__dependency1__, __dependency2__, __dependency3__, _
 
 module.exports = Handlebars;
 });
-require.register("raphael/raphael.js", function(exports, require, module){
+
+require.register("./local/raphael", function (exports, module) {
 // ┌────────────────────────────────────────────────────────────────────┐ \\
 // │ Raphaël 2.1.2 - JavaScript Vector Library                          │ \\
 // ├────────────────────────────────────────────────────────────────────┤ \\
@@ -40196,7 +32034,8 @@ require.register("raphael/raphael.js", function(exports, require, module){
 }));
 
 });
-require.register("bootstrap/js/bootstrap.min.js", function(exports, require, module){
+
+require.register("./local/bootstrap", function (exports, module) {
 /*!
  * Bootstrap v3.0.0
  *
@@ -40209,55 +32048,1415 @@ require.register("bootstrap/js/bootstrap.min.js", function(exports, require, mod
 
 +function(a){"use strict";var b='[data-dismiss="alert"]',c=function(c){a(c).on("click",b,this.close)};c.prototype.close=function(b){function f(){e.trigger("closed.bs.alert").remove()}var c=a(this),d=c.attr("data-target");d||(d=c.attr("href"),d=d&&d.replace(/.*(?=#[^\s]*$)/,""));var e=a(d);b&&b.preventDefault(),e.length||(e=c.hasClass("alert")?c:c.parent()),e.trigger(b=a.Event("close.bs.alert"));if(b.isDefaultPrevented())return;e.removeClass("in"),a.support.transition&&e.hasClass("fade")?e.one(a.support.transition.end,f).emulateTransitionEnd(150):f()};var d=a.fn.alert;a.fn.alert=function(b){return this.each(function(){var d=a(this),e=d.data("bs.alert");e||d.data("bs.alert",e=new c(this)),typeof b=="string"&&e[b].call(d)})},a.fn.alert.Constructor=c,a.fn.alert.noConflict=function(){return a.fn.alert=d,this},a(document).on("click.bs.alert.data-api",b,c.prototype.close)}(window.jQuery),+function(a){"use strict";var b=function(c,d){this.$element=a(c),this.options=a.extend({},b.DEFAULTS,d)};b.DEFAULTS={loadingText:"loading..."},b.prototype.setState=function(a){var b="disabled",c=this.$element,d=c.is("input")?"val":"html",e=c.data();a+="Text",e.resetText||c.data("resetText",c[d]()),c[d](e[a]||this.options[a]),setTimeout(function(){a=="loadingText"?c.addClass(b).attr(b,b):c.removeClass(b).removeAttr(b)},0)},b.prototype.toggle=function(){var a=this.$element.closest('[data-toggle="buttons"]');if(a.length){var b=this.$element.find("input").prop("checked",!this.$element.hasClass("active")).trigger("change");b.prop("type")==="radio"&&a.find(".active").removeClass("active")}this.$element.toggleClass("active")};var c=a.fn.button;a.fn.button=function(c){return this.each(function(){var d=a(this),e=d.data("bs.button"),f=typeof c=="object"&&c;e||d.data("bs.button",e=new b(this,f)),c=="toggle"?e.toggle():c&&e.setState(c)})},a.fn.button.Constructor=b,a.fn.button.noConflict=function(){return a.fn.button=c,this},a(document).on("click.bs.button.data-api","[data-toggle^=button]",function(b){var c=a(b.target);c.hasClass("btn")||(c=c.closest(".btn")),c.button("toggle"),b.preventDefault()})}(window.jQuery),+function(a){"use strict";var b=function(b,c){this.$element=a(b),this.$indicators=this.$element.find(".carousel-indicators"),this.options=c,this.paused=this.sliding=this.interval=this.$active=this.$items=null,this.options.pause=="hover"&&this.$element.on("mouseenter",a.proxy(this.pause,this)).on("mouseleave",a.proxy(this.cycle,this))};b.DEFAULTS={interval:5e3,pause:"hover",wrap:!0},b.prototype.cycle=function(b){return b||(this.paused=!1),this.interval&&clearInterval(this.interval),this.options.interval&&!this.paused&&(this.interval=setInterval(a.proxy(this.next,this),this.options.interval)),this},b.prototype.getActiveIndex=function(){return this.$active=this.$element.find(".item.active"),this.$items=this.$active.parent().children(),this.$items.index(this.$active)},b.prototype.to=function(b){var c=this,d=this.getActiveIndex();if(b>this.$items.length-1||b<0)return;return this.sliding?this.$element.one("slid",function(){c.to(b)}):d==b?this.pause().cycle():this.slide(b>d?"next":"prev",a(this.$items[b]))},b.prototype.pause=function(b){return b||(this.paused=!0),this.$element.find(".next, .prev").length&&a.support.transition.end&&(this.$element.trigger(a.support.transition.end),this.cycle(!0)),this.interval=clearInterval(this.interval),this},b.prototype.next=function(){if(this.sliding)return;return this.slide("next")},b.prototype.prev=function(){if(this.sliding)return;return this.slide("prev")},b.prototype.slide=function(b,c){var d=this.$element.find(".item.active"),e=c||d[b](),f=this.interval,g=b=="next"?"left":"right",h=b=="next"?"first":"last",i=this;if(!e.length){if(!this.options.wrap)return;e=this.$element.find(".item")[h]()}this.sliding=!0,f&&this.pause();var j=a.Event("slide.bs.carousel",{relatedTarget:e[0],direction:g});if(e.hasClass("active"))return;this.$indicators.length&&(this.$indicators.find(".active").removeClass("active"),this.$element.one("slid",function(){var b=a(i.$indicators.children()[i.getActiveIndex()]);b&&b.addClass("active")}));if(a.support.transition&&this.$element.hasClass("slide")){this.$element.trigger(j);if(j.isDefaultPrevented())return;e.addClass(b),e[0].offsetWidth,d.addClass(g),e.addClass(g),d.one(a.support.transition.end,function(){e.removeClass([b,g].join(" ")).addClass("active"),d.removeClass(["active",g].join(" ")),i.sliding=!1,setTimeout(function(){i.$element.trigger("slid")},0)}).emulateTransitionEnd(600)}else{this.$element.trigger(j);if(j.isDefaultPrevented())return;d.removeClass("active"),e.addClass("active"),this.sliding=!1,this.$element.trigger("slid")}return f&&this.cycle(),this};var c=a.fn.carousel;a.fn.carousel=function(c){return this.each(function(){var d=a(this),e=d.data("bs.carousel"),f=a.extend({},b.DEFAULTS,d.data(),typeof c=="object"&&c),g=typeof c=="string"?c:f.slide;e||d.data("bs.carousel",e=new b(this,f)),typeof c=="number"?e.to(c):g?e[g]():f.interval&&e.pause().cycle()})},a.fn.carousel.Constructor=b,a.fn.carousel.noConflict=function(){return a.fn.carousel=c,this},a(document).on("click.bs.carousel.data-api","[data-slide], [data-slide-to]",function(b){var c=a(this),d,e=a(c.attr("data-target")||(d=c.attr("href"))&&d.replace(/.*(?=#[^\s]+$)/,"")),f=a.extend({},e.data(),c.data()),g=c.attr("data-slide-to");g&&(f.interval=!1),e.carousel(f),(g=c.attr("data-slide-to"))&&e.data("bs.carousel").to(g),b.preventDefault()}),a(window).on("load",function(){a('[data-ride="carousel"]').each(function(){var b=a(this);b.carousel(b.data())})})}(window.jQuery),+function(a){function e(){a(b).remove(),a(c).each(function(b){var c=f(a(this));if(!c.hasClass("open"))return;c.trigger(b=a.Event("hide.bs.dropdown"));if(b.isDefaultPrevented())return;c.removeClass("open").trigger("hidden.bs.dropdown")})}function f(b){var c=b.attr("data-target");c||(c=b.attr("href"),c=c&&/#/.test(c)&&c.replace(/.*(?=#[^\s]*$)/,""));var d=c&&a(c);return d&&d.length?d:b.parent()}"use strict";var b=".dropdown-backdrop",c="[data-toggle=dropdown]",d=function(b){var c=a(b).on("click.bs.dropdown",this.toggle)};d.prototype.toggle=function(b){var c=a(this);if(c.is(".disabled, :disabled"))return;var d=f(c),g=d.hasClass("open");e();if(!g){"ontouchstart"in document.documentElement&&!d.closest(".navbar-nav").length&&a('<div class="dropdown-backdrop"/>').insertAfter(a(this)).on("click",e),d.trigger(b=a.Event("show.bs.dropdown"));if(b.isDefaultPrevented())return;d.toggleClass("open").trigger("shown.bs.dropdown"),c.focus()}return!1},d.prototype.keydown=function(b){if(!/(38|40|27)/.test(b.keyCode))return;var d=a(this);b.preventDefault(),b.stopPropagation();if(d.is(".disabled, :disabled"))return;var e=f(d),g=e.hasClass("open");if(!g||g&&b.keyCode==27)return b.which==27&&e.find(c).focus(),d.click();var h=a("[role=menu] li:not(.divider):visible a",e);if(!h.length)return;var i=h.index(h.filter(":focus"));b.keyCode==38&&i>0&&i--,b.keyCode==40&&i<h.length-1&&i++,~i||(i=0),h.eq(i).focus()};var g=a.fn.dropdown;a.fn.dropdown=function(b){return this.each(function(){var c=a(this),e=c.data("dropdown");e||c.data("dropdown",e=new d(this)),typeof b=="string"&&e[b].call(c)})},a.fn.dropdown.Constructor=d,a.fn.dropdown.noConflict=function(){return a.fn.dropdown=g,this},a(document).on("click.bs.dropdown.data-api",e).on("click.bs.dropdown.data-api",".dropdown form",function(a){a.stopPropagation()}).on("click.bs.dropdown.data-api",c,d.prototype.toggle).on("keydown.bs.dropdown.data-api",c+", [role=menu]",d.prototype.keydown)}(window.jQuery),+function(a){"use strict";var b=function(b,c){this.options=c,this.$element=a(b),this.$backdrop=this.isShown=null,this.options.remote&&this.$element.load(this.options.remote)};b.DEFAULTS={backdrop:!0,keyboard:!0,show:!0},b.prototype.toggle=function(a){return this[this.isShown?"hide":"show"](a)},b.prototype.show=function(b){var c=this,d=a.Event("show.bs.modal",{relatedTarget:b});this.$element.trigger(d);if(this.isShown||d.isDefaultPrevented())return;this.isShown=!0,this.escape(),this.$element.on("click.dismiss.modal",'[data-dismiss="modal"]',a.proxy(this.hide,this)),this.backdrop(function(){var d=a.support.transition&&c.$element.hasClass("fade");c.$element.parent().length||c.$element.appendTo(document.body),c.$element.show(),d&&c.$element[0].offsetWidth,c.$element.addClass("in").attr("aria-hidden",!1),c.enforceFocus();var e=a.Event("shown.bs.modal",{relatedTarget:b});d?c.$element.find(".modal-dialog").one(a.support.transition.end,function(){c.$element.focus().trigger(e)}).emulateTransitionEnd(300):c.$element.focus().trigger(e)})},b.prototype.hide=function(b){b&&b.preventDefault(),b=a.Event("hide.bs.modal"),this.$element.trigger(b);if(!this.isShown||b.isDefaultPrevented())return;this.isShown=!1,this.escape(),a(document).off("focusin.bs.modal"),this.$element.removeClass("in").attr("aria-hidden",!0).off("click.dismiss.modal"),a.support.transition&&this.$element.hasClass("fade")?this.$element.one(a.support.transition.end,a.proxy(this.hideModal,this)).emulateTransitionEnd(300):this.hideModal()},b.prototype.enforceFocus=function(){a(document).off("focusin.bs.modal").on("focusin.bs.modal",a.proxy(function(a){this.$element[0]!==a.target&&!this.$element.has(a.target).length&&this.$element.focus()},this))},b.prototype.escape=function(){this.isShown&&this.options.keyboard?this.$element.on("keyup.dismiss.bs.modal",a.proxy(function(a){a.which==27&&this.hide()},this)):this.isShown||this.$element.off("keyup.dismiss.bs.modal")},b.prototype.hideModal=function(){var a=this;this.$element.hide(),this.backdrop(function(){a.removeBackdrop(),a.$element.trigger("hidden.bs.modal")})},b.prototype.removeBackdrop=function(){this.$backdrop&&this.$backdrop.remove(),this.$backdrop=null},b.prototype.backdrop=function(b){var c=this,d=this.$element.hasClass("fade")?"fade":"";if(this.isShown&&this.options.backdrop){var e=a.support.transition&&d;this.$backdrop=a('<div class="modal-backdrop '+d+'" />').appendTo(document.body),this.$element.on("click.dismiss.modal",a.proxy(function(a){if(a.target!==a.currentTarget)return;this.options.backdrop=="static"?this.$element[0].focus.call(this.$element[0]):this.hide.call(this)},this)),e&&this.$backdrop[0].offsetWidth,this.$backdrop.addClass("in");if(!b)return;e?this.$backdrop.one(a.support.transition.end,b).emulateTransitionEnd(150):b()}else!this.isShown&&this.$backdrop?(this.$backdrop.removeClass("in"),a.support.transition&&this.$element.hasClass("fade")?this.$backdrop.one(a.support.transition.end,b).emulateTransitionEnd(150):b()):b&&b()};var c=a.fn.modal;a.fn.modal=function(c,d){return this.each(function(){var e=a(this),f=e.data("bs.modal"),g=a.extend({},b.DEFAULTS,e.data(),typeof c=="object"&&c);f||e.data("bs.modal",f=new b(this,g)),typeof c=="string"?f[c](d):g.show&&f.show(d)})},a.fn.modal.Constructor=b,a.fn.modal.noConflict=function(){return a.fn.modal=c,this},a(document).on("click.bs.modal.data-api",'[data-toggle="modal"]',function(b){var c=a(this),d=c.attr("href"),e=a(c.attr("data-target")||d&&d.replace(/.*(?=#[^\s]+$)/,"")),f=e.data("modal")?"toggle":a.extend({remote:!/#/.test(d)&&d},e.data(),c.data());b.preventDefault(),e.modal(f,this).one("hide",function(){c.is(":visible")&&c.focus()})}),a(document).on("show.bs.modal",".modal",function(){a(document.body).addClass("modal-open")}).on("hidden.bs.modal",".modal",function(){a(document.body).removeClass("modal-open")})}(window.jQuery),+function(a){"use strict";var b=function(a,b){this.type=this.options=this.enabled=this.timeout=this.hoverState=this.$element=null,this.init("tooltip",a,b)};b.DEFAULTS={animation:!0,placement:"top",selector:!1,template:'<div class="tooltip"><div class="tooltip-arrow"></div><div class="tooltip-inner"></div></div>',trigger:"hover focus",title:"",delay:0,html:!1,container:!1},b.prototype.init=function(b,c,d){this.enabled=!0,this.type=b,this.$element=a(c),this.options=this.getOptions(d);var e=this.options.trigger.split(" ");for(var f=e.length;f--;){var g=e[f];if(g=="click")this.$element.on("click."+this.type,this.options.selector,a.proxy(this.toggle,this));else if(g!="manual"){var h=g=="hover"?"mouseenter":"focus",i=g=="hover"?"mouseleave":"blur";this.$element.on(h+"."+this.type,this.options.selector,a.proxy(this.enter,this)),this.$element.on(i+"."+this.type,this.options.selector,a.proxy(this.leave,this))}}this.options.selector?this._options=a.extend({},this.options,{trigger:"manual",selector:""}):this.fixTitle()},b.prototype.getDefaults=function(){return b.DEFAULTS},b.prototype.getOptions=function(b){return b=a.extend({},this.getDefaults(),this.$element.data(),b),b.delay&&typeof b.delay=="number"&&(b.delay={show:b.delay,hide:b.delay}),b},b.prototype.getDelegateOptions=function(){var b={},c=this.getDefaults();return this._options&&a.each(this._options,function(a,d){c[a]!=d&&(b[a]=d)}),b},b.prototype.enter=function(b){var c=b instanceof this.constructor?b:a(b.currentTarget)[this.type](this.getDelegateOptions()).data("bs."+this.type);clearTimeout(c.timeout),c.hoverState="in";if(!c.options.delay||!c.options.delay.show)return c.show();c.timeout=setTimeout(function(){c.hoverState=="in"&&c.show()},c.options.delay.show)},b.prototype.leave=function(b){var c=b instanceof this.constructor?b:a(b.currentTarget)[this.type](this.getDelegateOptions()).data("bs."+this.type);clearTimeout(c.timeout),c.hoverState="out";if(!c.options.delay||!c.options.delay.hide)return c.hide();c.timeout=setTimeout(function(){c.hoverState=="out"&&c.hide()},c.options.delay.hide)},b.prototype.show=function(){var b=a.Event("show.bs."+this.type);if(this.hasContent()&&this.enabled){this.$element.trigger(b);if(b.isDefaultPrevented())return;var c=this.tip();this.setContent(),this.options.animation&&c.addClass("fade");var d=typeof this.options.placement=="function"?this.options.placement.call(this,c[0],this.$element[0]):this.options.placement,e=/\s?auto?\s?/i,f=e.test(d);f&&(d=d.replace(e,"")||"top"),c.detach().css({top:0,left:0,display:"block"}).addClass(d),this.options.container?c.appendTo(this.options.container):c.insertAfter(this.$element);var g=this.getPosition(),h=c[0].offsetWidth,i=c[0].offsetHeight;if(f){var j=this.$element.parent(),k=d,l=document.documentElement.scrollTop||document.body.scrollTop,m=this.options.container=="body"?window.innerWidth:j.outerWidth(),n=this.options.container=="body"?window.innerHeight:j.outerHeight(),o=this.options.container=="body"?0:j.offset().left;d=d=="bottom"&&g.top+g.height+i-l>n?"top":d=="top"&&g.top-l-i<0?"bottom":d=="right"&&g.right+h>m?"left":d=="left"&&g.left-h<o?"right":d,c.removeClass(k).addClass(d)}var p=this.getCalculatedOffset(d,g,h,i);this.applyPlacement(p,d),this.$element.trigger("shown.bs."+this.type)}},b.prototype.applyPlacement=function(a,b){var c,d=this.tip(),e=d[0].offsetWidth,f=d[0].offsetHeight,g=parseInt(d.css("margin-top"),10),h=parseInt(d.css("margin-left"),10);isNaN(g)&&(g=0),isNaN(h)&&(h=0),a.top=a.top+g,a.left=a.left+h,d.offset(a).addClass("in");var i=d[0].offsetWidth,j=d[0].offsetHeight;b=="top"&&j!=f&&(c=!0,a.top=a.top+f-j);if(/bottom|top/.test(b)){var k=0;a.left<0&&(k=a.left*-2,a.left=0,d.offset(a),i=d[0].offsetWidth,j=d[0].offsetHeight),this.replaceArrow(k-e+i,i,"left")}else this.replaceArrow(j-f,j,"top");c&&d.offset(a)},b.prototype.replaceArrow=function(a,b,c){this.arrow().css(c,a?50*(1-a/b)+"%":"")},b.prototype.setContent=function(){var a=this.tip(),b=this.getTitle();a.find(".tooltip-inner")[this.options.html?"html":"text"](b),a.removeClass("fade in top bottom left right")},b.prototype.hide=function(){function e(){b.hoverState!="in"&&c.detach()}var b=this,c=this.tip(),d=a.Event("hide.bs."+this.type);this.$element.trigger(d);if(d.isDefaultPrevented())return;return c.removeClass("in"),a.support.transition&&this.$tip.hasClass("fade")?c.one(a.support.transition.end,e).emulateTransitionEnd(150):e(),this.$element.trigger("hidden.bs."+this.type),this},b.prototype.fixTitle=function(){var a=this.$element;(a.attr("title")||typeof a.attr("data-original-title")!="string")&&a.attr("data-original-title",a.attr("title")||"").attr("title","")},b.prototype.hasContent=function(){return this.getTitle()},b.prototype.getPosition=function(){var b=this.$element[0];return a.extend({},typeof b.getBoundingClientRect=="function"?b.getBoundingClientRect():{width:b.offsetWidth,height:b.offsetHeight},this.$element.offset())},b.prototype.getCalculatedOffset=function(a,b,c,d){return a=="bottom"?{top:b.top+b.height,left:b.left+b.width/2-c/2}:a=="top"?{top:b.top-d,left:b.left+b.width/2-c/2}:a=="left"?{top:b.top+b.height/2-d/2,left:b.left-c}:{top:b.top+b.height/2-d/2,left:b.left+b.width}},b.prototype.getTitle=function(){var a,b=this.$element,c=this.options;return a=b.attr("data-original-title")||(typeof c.title=="function"?c.title.call(b[0]):c.title),a},b.prototype.tip=function(){return this.$tip=this.$tip||a(this.options.template)},b.prototype.arrow=function(){return this.$arrow=this.$arrow||this.tip().find(".tooltip-arrow")},b.prototype.validate=function(){this.$element[0].parentNode||(this.hide(),this.$element=null,this.options=null)},b.prototype.enable=function(){this.enabled=!0},b.prototype.disable=function(){this.enabled=!1},b.prototype.toggleEnabled=function(){this.enabled=!this.enabled},b.prototype.toggle=function(b){var c=b?a(b.currentTarget)[this.type](this.getDelegateOptions()).data("bs."+this.type):this;c.tip().hasClass("in")?c.leave(c):c.enter(c)},b.prototype.destroy=function(){this.hide().$element.off("."+this.type).removeData("bs."+this.type)};var c=a.fn.tooltip;a.fn.tooltip=function(c){return this.each(function(){var d=a(this),e=d.data("bs.tooltip"),f=typeof c=="object"&&c;e||d.data("bs.tooltip",e=new b(this,f)),typeof c=="string"&&e[c]()})},a.fn.tooltip.Constructor=b,a.fn.tooltip.noConflict=function(){return a.fn.tooltip=c,this}}(window.jQuery),+function(a){"use strict";var b=function(a,b){this.init("popover",a,b)};if(!a.fn.tooltip)throw new Error("Popover requires tooltip.js");b.DEFAULTS=a.extend({},a.fn.tooltip.Constructor.DEFAULTS,{placement:"right",trigger:"click",content:"",template:'<div class="popover"><div class="arrow"></div><h3 class="popover-title"></h3><div class="popover-content"></div></div>'}),b.prototype=a.extend({},a.fn.tooltip.Constructor.prototype),b.prototype.constructor=b,b.prototype.getDefaults=function(){return b.DEFAULTS},b.prototype.setContent=function(){var a=this.tip(),b=this.getTitle(),c=this.getContent();a.find(".popover-title")[this.options.html?"html":"text"](b),a.find(".popover-content")[this.options.html?"html":"text"](c),a.removeClass("fade top bottom left right in"),a.find(".popover-title").html()||a.find(".popover-title").hide()},b.prototype.hasContent=function(){return this.getTitle()||this.getContent()},b.prototype.getContent=function(){var a=this.$element,b=this.options;return a.attr("data-content")||(typeof b.content=="function"?b.content.call(a[0]):b.content)},b.prototype.arrow=function(){return this.$arrow=this.$arrow||this.tip().find(".arrow")},b.prototype.tip=function(){return this.$tip||(this.$tip=a(this.options.template)),this.$tip};var c=a.fn.popover;a.fn.popover=function(c){return this.each(function(){var d=a(this),e=d.data("bs.popover"),f=typeof c=="object"&&c;e||d.data("bs.popover",e=new b(this,f)),typeof c=="string"&&e[c]()})},a.fn.popover.Constructor=b,a.fn.popover.noConflict=function(){return a.fn.popover=c,this}}(window.jQuery),+function(a){"use strict";var b=function(b){this.element=a(b)};b.prototype.show=function(){var b=this.element,c=b.closest("ul:not(.dropdown-menu)"),d=b.attr("data-target");d||(d=b.attr("href"),d=d&&d.replace(/.*(?=#[^\s]*$)/,""));if(b.parent("li").hasClass("active"))return;var e=c.find(".active:last a")[0],f=a.Event("show.bs.tab",{relatedTarget:e});b.trigger(f);if(f.isDefaultPrevented())return;var g=a(d);this.activate(b.parent("li"),c),this.activate(g,g.parent(),function(){b.trigger({type:"shown.bs.tab",relatedTarget:e})})},b.prototype.activate=function(b,c,d){function g(){e.removeClass("active").find("> .dropdown-menu > .active").removeClass("active"),b.addClass("active"),f?(b[0].offsetWidth,b.addClass("in")):b.removeClass("fade"),b.parent(".dropdown-menu")&&b.closest("li.dropdown").addClass("active"),d&&d()}var e=c.find("> .active"),f=d&&a.support.transition&&e.hasClass("fade");f?e.one(a.support.transition.end,g).emulateTransitionEnd(150):g(),e.removeClass("in")};var c=a.fn.tab;a.fn.tab=function(c){return this.each(function(){var d=a(this),e=d.data("bs.tab");e||d.data("bs.tab",e=new b(this)),typeof c=="string"&&e[c]()})},a.fn.tab.Constructor=b,a.fn.tab.noConflict=function(){return a.fn.tab=c,this},a(document).on("click.bs.tab.data-api",'[data-toggle="tab"], [data-toggle="pill"]',function(b){b.preventDefault(),a(this).tab("show")})}(window.jQuery),+function(a){"use strict";var b=function(c,d){this.options=a.extend({},b.DEFAULTS,d),this.$window=a(window).on("scroll.bs.affix.data-api",a.proxy(this.checkPosition,this)).on("click.bs.affix.data-api",a.proxy(this.checkPositionWithEventLoop,this)),this.$element=a(c),this.affixed=this.unpin=null,this.checkPosition()};b.RESET="affix affix-top affix-bottom",b.DEFAULTS={offset:0},b.prototype.checkPositionWithEventLoop=function(){setTimeout(a.proxy(this.checkPosition,this),1)},b.prototype.checkPosition=function(){if(!this.$element.is(":visible"))return;var c=a(document).height(),d=this.$window.scrollTop(),e=this.$element.offset(),f=this.options.offset,g=f.top,h=f.bottom;typeof f!="object"&&(h=g=f),typeof g=="function"&&(g=f.top()),typeof h=="function"&&(h=f.bottom());var i=this.unpin!=null&&d+this.unpin<=e.top?!1:h!=null&&e.top+this.$element.height()>=c-h?"bottom":g!=null&&d<=g?"top":!1;if(this.affixed===i)return;this.unpin&&this.$element.css("top",""),this.affixed=i,this.unpin=i=="bottom"?e.top-d:null,this.$element.removeClass(b.RESET).addClass("affix"+(i?"-"+i:"")),i=="bottom"&&this.$element.offset({top:document.body.offsetHeight-h-this.$element.height()})};var c=a.fn.affix;a.fn.affix=function(c){return this.each(function(){var d=a(this),e=d.data("bs.affix"),f=typeof c=="object"&&c;e||d.data("bs.affix",e=new b(this,f)),typeof c=="string"&&e[c]()})},a.fn.affix.Constructor=b,a.fn.affix.noConflict=function(){return a.fn.affix=c,this},a(window).on("load",function(){a('[data-spy="affix"]').each(function(){var b=a(this),c=b.data();c.offset=c.offset||{},c.offsetBottom&&(c.offset.bottom=c.offsetBottom),c.offsetTop&&(c.offset.top=c.offsetTop),b.affix(c)})})}(window.jQuery),+function(a){"use strict";var b=function(c,d){this.$element=a(c),this.options=a.extend({},b.DEFAULTS,d),this.transitioning=null,this.options.parent&&(this.$parent=a(this.options.parent)),this.options.toggle&&this.toggle()};b.DEFAULTS={toggle:!0},b.prototype.dimension=function(){var a=this.$element.hasClass("width");return a?"width":"height"},b.prototype.show=function(){if(this.transitioning||this.$element.hasClass("in"))return;var b=a.Event("show.bs.collapse");this.$element.trigger(b);if(b.isDefaultPrevented())return;var c=this.$parent&&this.$parent.find("> .panel > .in");if(c&&c.length){var d=c.data("bs.collapse");if(d&&d.transitioning)return;c.collapse("hide"),d||c.data("bs.collapse",null)}var e=this.dimension();this.$element.removeClass("collapse").addClass("collapsing")[e](0),this.transitioning=1;var f=function(){this.$element.removeClass("collapsing").addClass("in")[e]("auto"),this.transitioning=0,this.$element.trigger("shown.bs.collapse")};if(!a.support.transition)return f.call(this);var g=a.camelCase(["scroll",e].join("-"));this.$element.one(a.support.transition.end,a.proxy(f,this)).emulateTransitionEnd(350)[e](this.$element[0][g])},b.prototype.hide=function(){if(this.transitioning||!this.$element.hasClass("in"))return;var b=a.Event("hide.bs.collapse");this.$element.trigger(b);if(b.isDefaultPrevented())return;var c=this.dimension();this.$element[c](this.$element[c]())[0].offsetHeight,this.$element.addClass("collapsing").removeClass("collapse").removeClass("in"),this.transitioning=1;var d=function(){this.transitioning=0,this.$element.trigger("hidden.bs.collapse").removeClass("collapsing").addClass("collapse")};if(!a.support.transition)return d.call(this);this.$element[c](0).one(a.support.transition.end,a.proxy(d,this)).emulateTransitionEnd(350)},b.prototype.toggle=function(){this[this.$element.hasClass("in")?"hide":"show"]()};var c=a.fn.collapse;a.fn.collapse=function(c){return this.each(function(){var d=a(this),e=d.data("bs.collapse"),f=a.extend({},b.DEFAULTS,d.data(),typeof c=="object"&&c);e||d.data("bs.collapse",e=new b(this,f)),typeof c=="string"&&e[c]()})},a.fn.collapse.Constructor=b,a.fn.collapse.noConflict=function(){return a.fn.collapse=c,this},a(document).on("click.bs.collapse.data-api","[data-toggle=collapse]",function(b){var c=a(this),d,e=c.attr("data-target")||b.preventDefault()||(d=c.attr("href"))&&d.replace(/.*(?=#[^\s]+$)/,""),f=a(e),g=f.data("bs.collapse"),h=g?"toggle":c.data(),i=c.attr("data-parent"),j=i&&a(i);if(!g||!g.transitioning)j&&j.find('[data-toggle=collapse][data-parent="'+i+'"]').not(c).addClass("collapsed"),c[f.hasClass("in")?"addClass":"removeClass"]("collapsed");f.collapse(h)})}(window.jQuery),+function(a){function b(c,d){var e,f=a.proxy(this.process,this);this.$element=a(c).is("body")?a(window):a(c),this.$body=a("body"),this.$scrollElement=this.$element.on("scroll.bs.scroll-spy.data-api",f),this.options=a.extend({},b.DEFAULTS,d),this.selector=(this.options.target||(e=a(c).attr("href"))&&e.replace(/.*(?=#[^\s]+$)/,"")||"")+" .nav li > a",this.offsets=a([]),this.targets=a([]),this.activeTarget=null,this.refresh(),this.process()}"use strict",b.DEFAULTS={offset:10},b.prototype.refresh=function(){var b=this.$element[0]==window?"offset":"position";this.offsets=a([]),this.targets=a([]);var c=this,d=this.$body.find(this.selector).map(function(){var d=a(this),e=d.data("target")||d.attr("href"),f=/^#\w/.test(e)&&a(e);return f&&f.length&&[[f[b]().top+(!a.isWindow(c.$scrollElement.get(0))&&c.$scrollElement.scrollTop()),e]]||null}).sort(function(a,b){return a[0]-b[0]}).each(function(){c.offsets.push(this[0]),c.targets.push(this[1])})},b.prototype.process=function(){var a=this.$scrollElement.scrollTop()+this.options.offset,b=this.$scrollElement[0].scrollHeight||this.$body[0].scrollHeight,c=b-this.$scrollElement.height(),d=this.offsets,e=this.targets,f=this.activeTarget,g;if(a>=c)return f!=(g=e.last()[0])&&this.activate(g);for(g=d.length;g--;)f!=e[g]&&a>=d[g]&&(!d[g+1]||a<=d[g+1])&&this.activate(e[g])},b.prototype.activate=function(b){this.activeTarget=b,a(this.selector).parents(".active").removeClass("active");var c=this.selector+'[data-target="'+b+'"],'+this.selector+'[href="'+b+'"]',d=a(c).parents("li").addClass("active");d.parent(".dropdown-menu").length&&(d=d.closest("li.dropdown").addClass("active")),d.trigger("activate")};var c=a.fn.scrollspy;a.fn.scrollspy=function(c){return this.each(function(){var d=a(this),e=d.data("bs.scrollspy"),f=typeof c=="object"&&c;e||d.data("bs.scrollspy",e=new b(this,f)),typeof c=="string"&&e[c]()})},a.fn.scrollspy.Constructor=b,a.fn.scrollspy.noConflict=function(){return a.fn.scrollspy=c,this},a(window).on("load",function(){a('[data-spy="scroll"]').each(function(){var b=a(this);b.scrollspy(b.data())})})}(window.jQuery),+function(a){function b(){var a=document.createElement("bootstrap"),b={WebkitTransition:"webkitTransitionEnd",MozTransition:"transitionend",OTransition:"oTransitionEnd otransitionend",transition:"transitionend"};for(var c in b)if(a.style[c]!==undefined)return{end:b[c]}}"use strict",a.fn.emulateTransitionEnd=function(b){var c=!1,d=this;a(this).one(a.support.transition.end,function(){c=!0});var e=function(){c||a(d).trigger(a.support.transition.end)};return setTimeout(e,b),this},a(function(){a.support.transition=b()})}(window.jQuery)
 });
-require.register("datetimepicker/bootstrap-datetimepicker.js", function(exports, require, module){
-/**
- * @license
- * =========================================================
- * bootstrap-datetimepicker.js
- * http://www.eyecon.ro/bootstrap-datepicker
- * =========================================================
- * Copyright 2012 Stefan Petre
- *
- * Contributions:
- *  - Andrew Rowls
- *  - Thiago de Arruda
- *  - updated for Bootstrap v3 by Jonathan Peterson @Eonasdan
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- * =========================================================
- */
-(function($){var smartPhone=window.orientation!=undefined;var DateTimePicker=function(element,options){this.id=dpgId++;this.init(element,options)};var dateToDate=function(dt){if(typeof dt==="string"){return new Date(dt)}return dt};DateTimePicker.prototype={constructor:DateTimePicker,init:function(element,options){var icon;if(!(options.pickTime||options.pickDate))throw new Error("Must choose at least one picker");this.options=options;this.$element=$(element);this.language=options.language in dates?options.language:"en";this.pickDate=options.pickDate;this.pickTime=options.pickTime;this.isInput=this.$element.is("input");this.component=false;if(this.$element.find(".input-group"))this.component=this.$element.find(".input-group-addon");this.format=options.format;if(!this.format){if(this.isInput)this.format=this.$element.data("format");else this.format=this.$element.find("input").data("format");if(!this.format)this.format="MM/dd/yyyy"+(this.pickTime?" hh:mm":"")+(this.pickSeconds?":ss":"")}this._compileFormat();if(this.component){icon=this.component.find("span")}if(this.pickTime){if(icon&&icon.length){this.timeIcon=icon.data("time-icon");this.upIcon=icon.data("up-icon");this.downIcon=icon.data("down-icon")}if(!this.timeIcon)this.timeIcon="glyphicon glyphicon-time";if(!this.upIcon)this.upIcon="glyphicon glyphicon-chevron-up";if(!this.downIcon)this.downIcon="glyphicon glyphicon-chevron-down";icon.addClass(this.timeIcon)}if(this.pickDate){if(icon&&icon.length)this.dateIcon=icon.data("date-icon");if(!this.dateIcon)this.dateIcon="glyphicon glyphicon-calendar";icon.removeClass(this.timeIcon);icon.addClass(this.dateIcon)}this.widget=$(getTemplate(this.timeIcon,this.upIcon,this.downIcon,options.pickDate,options.pickTime,options.pick12HourFormat,options.pickSeconds,options.collapse)).appendTo("body");this.minViewMode=options.minViewMode||this.$element.data("date-minviewmode")||0;if(typeof this.minViewMode==="string"){switch(this.minViewMode){case"months":this.minViewMode=1;break;case"years":this.minViewMode=2;break;default:this.minViewMode=0;break}}this.viewMode=options.viewMode||this.$element.data("date-viewmode")||0;if(typeof this.viewMode==="string"){switch(this.viewMode){case"months":this.viewMode=1;break;case"years":this.viewMode=2;break;default:this.viewMode=0;break}}this.startViewMode=this.viewMode;this.weekStart=options.weekStart||this.$element.data("date-weekstart")||0;this.weekEnd=this.weekStart===0?6:this.weekStart-1;this.setStartDate(options.startDate||this.$element.data("date-startdate"));this.setEndDate(options.endDate||this.$element.data("date-enddate"));this.fillDow();this.fillMonths();this.fillHours();this.fillMinutes();this.fillSeconds();this.update();this.showMode();this._attachDatePickerEvents()},show:function(e){this.widget.show();this.height=this.component?this.component.outerHeight():this.$element.outerHeight();this.place();this.$element.trigger({type:"show",date:this._date});this._attachDatePickerGlobalEvents();if(e){e.stopPropagation();e.preventDefault()}},disable:function(){this.$element.find("input").prop("disabled",true);this._detachDatePickerEvents()},enable:function(){this.$element.find("input").prop("disabled",false);this._attachDatePickerEvents()},hide:function(){var collapse=this.widget.find(".collapse");for(var i=0;i<collapse.length;i++){var collapseData=collapse.eq(i).data("collapse");if(collapseData&&collapseData.transitioning)return}this.widget.hide();this.viewMode=this.startViewMode;this.showMode();this.$element.trigger({type:"hide",date:this._date});this._detachDatePickerGlobalEvents()},set:function(){var formatted="";if(!this._unset)formatted=this.formatDate(this._date);if(!this.isInput){if(this.component){var input=this.$element.find("input");input.val(formatted);this._resetMaskPos(input)}this.$element.data("date",formatted)}else{this.$element.val(formatted);this._resetMaskPos(this.$element)}if(!this.pickTime)this.hide()},setValue:function(newDate){if(!newDate){this._unset=true}else{this._unset=false}if(typeof newDate==="string"){this._date=this.parseDate(newDate)}else if(newDate){this._date=new Date(newDate)}this.set();this.viewDate=UTCDate(this._date.getUTCFullYear(),this._date.getUTCMonth(),1,0,0,0,0);this.fillDate();this.fillTime()},getDate:function(){if(this._unset)return null;return new Date(this._date.valueOf())},setDate:function(date){if(!date)this.setValue(null);else this.setValue(date.valueOf())},setStartDate:function(date){if(date instanceof Date){this.startDate=date}else if(typeof date==="string"){this.startDate=new UTCDate(date);if(!this.startDate.getUTCFullYear()){this.startDate=-Infinity}}else{this.startDate=-Infinity}if(this.viewDate){this.update()}},setEndDate:function(date){if(date instanceof Date){this.endDate=date}else if(typeof date==="string"){this.endDate=new UTCDate(date);if(!this.endDate.getUTCFullYear()){this.endDate=Infinity}}else{this.endDate=Infinity}if(this.viewDate){this.update()}},getLocalDate:function(){if(this._unset)return null;var d=this._date;return new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate(),d.getUTCHours(),d.getUTCMinutes(),d.getUTCSeconds(),d.getUTCMilliseconds())},setLocalDate:function(localDate){if(!localDate)this.setValue(null);else this.setValue(Date.UTC(localDate.getFullYear(),localDate.getMonth(),localDate.getDate(),localDate.getHours(),localDate.getMinutes(),localDate.getSeconds(),localDate.getMilliseconds()))},place:function(){var position="absolute";var offset=this.component?this.component.offset():this.$element.offset();this.width=this.component?this.component.outerWidth():this.$element.outerWidth();offset.top=offset.top+this.height;var $window=$(window);if(this.options.width!=undefined){this.widget.width(this.options.width)}if(this.options.orientation=="left"){this.widget.addClass("left-oriented");offset.left=offset.left-this.widget.width()+20}if(this._isInFixed()){position="fixed";offset.top-=$window.scrollTop();offset.left-=$window.scrollLeft()}if($window.width()<offset.left+this.widget.outerWidth()){offset.right=$window.width()-offset.left-this.width;offset.left="auto";this.widget.addClass("pull-right")}else{offset.right="auto";this.widget.removeClass("pull-right")}this.widget.css({position:position,top:offset.top,left:offset.left,right:offset.right})},notifyChange:function(){this.$element.trigger({type:"changeDate",date:this.getDate(),localDate:this.getLocalDate()})},update:function(newDate){var dateStr=newDate;if(!dateStr){if(this.isInput){dateStr=this.$element.val()}else{dateStr=this.$element.find("input").val()}if(dateStr){this._date=this.parseDate(dateStr)}if(!this._date){var tmp=new Date;this._date=UTCDate(tmp.getFullYear(),tmp.getMonth(),tmp.getDate(),tmp.getHours(),tmp.getMinutes(),tmp.getSeconds(),tmp.getMilliseconds())}}this.viewDate=UTCDate(this._date.getUTCFullYear(),this._date.getUTCMonth(),1,0,0,0,0);this.fillDate();this.fillTime()},fillDow:function(){var dowCnt=this.weekStart;var html=$("<tr>");while(dowCnt<this.weekStart+7){html.append('<th class="dow">'+dates[this.language].daysMin[dowCnt++%7]+"</th>")}this.widget.find(".datepicker-days thead").append(html)},fillMonths:function(){var html="";var i=0;while(i<12){html+='<span class="month">'+dates[this.language].monthsShort[i++]+"</span>"}this.widget.find(".datepicker-months td").append(html)},fillDate:function(){var year=this.viewDate.getUTCFullYear();var month=this.viewDate.getUTCMonth();var currentDate=UTCDate(this._date.getUTCFullYear(),this._date.getUTCMonth(),this._date.getUTCDate(),0,0,0,0);var startYear=typeof this.startDate==="object"?this.startDate.getUTCFullYear():-Infinity;var startMonth=typeof this.startDate==="object"?this.startDate.getUTCMonth():-1;var endYear=typeof this.endDate==="object"?this.endDate.getUTCFullYear():Infinity;var endMonth=typeof this.endDate==="object"?this.endDate.getUTCMonth():12;this.widget.find(".datepicker-days").find(".disabled").removeClass("disabled");this.widget.find(".datepicker-months").find(".disabled").removeClass("disabled");this.widget.find(".datepicker-years").find(".disabled").removeClass("disabled");this.widget.find(".datepicker-days th:eq(1)").text(dates[this.language].months[month]+" "+year);var prevMonth=UTCDate(year,month-1,28,0,0,0,0);var day=DPGlobal.getDaysInMonth(prevMonth.getUTCFullYear(),prevMonth.getUTCMonth());prevMonth.setUTCDate(day);prevMonth.setUTCDate(day-(prevMonth.getUTCDay()-this.weekStart+7)%7);if(year==startYear&&month<=startMonth||year<startYear){this.widget.find(".datepicker-days th:eq(0)").addClass("disabled")}if(year==endYear&&month>=endMonth||year>endYear){this.widget.find(".datepicker-days th:eq(2)").addClass("disabled")}var nextMonth=new Date(prevMonth.valueOf());nextMonth.setUTCDate(nextMonth.getUTCDate()+42);nextMonth=nextMonth.valueOf();var html=[];var row;var clsName;while(prevMonth.valueOf()<nextMonth){if(prevMonth.getUTCDay()===this.weekStart){row=$("<tr>");html.push(row)}clsName="";if(prevMonth.getUTCFullYear()<year||prevMonth.getUTCFullYear()==year&&prevMonth.getUTCMonth()<month){clsName+=" old"}else if(prevMonth.getUTCFullYear()>year||prevMonth.getUTCFullYear()==year&&prevMonth.getUTCMonth()>month){clsName+=" new"}if(prevMonth.valueOf()===currentDate.valueOf()){clsName+=" active"}if(prevMonth.valueOf()+864e5<=this.startDate){clsName+=" disabled"}if(prevMonth.valueOf()>this.endDate){clsName+=" disabled"}row.append('<td class="day'+clsName+'">'+prevMonth.getUTCDate()+"</td>");prevMonth.setUTCDate(prevMonth.getUTCDate()+1)}this.widget.find(".datepicker-days tbody").empty().append(html);var currentYear=this._date.getUTCFullYear();var months=this.widget.find(".datepicker-months").find("th:eq(1)").text(year).end().find("span").removeClass("active");if(currentYear===year){months.eq(this._date.getUTCMonth()).addClass("active")}if(currentYear-1<startYear){this.widget.find(".datepicker-months th:eq(0)").addClass("disabled")}if(currentYear+1>endYear){this.widget.find(".datepicker-months th:eq(2)").addClass("disabled")}for(var i=0;i<12;i++){if(year==startYear&&startMonth>i||year<startYear){$(months[i]).addClass("disabled")}else if(year==endYear&&endMonth<i||year>endYear){$(months[i]).addClass("disabled")}}html="";year=parseInt(year/10,10)*10;var yearCont=this.widget.find(".datepicker-years").find("th:eq(1)").text(year+"-"+(year+9)).end().find("td");this.widget.find(".datepicker-years").find("th").removeClass("disabled");if(startYear>year){this.widget.find(".datepicker-years").find("th:eq(0)").addClass("disabled")}if(endYear<year+9){this.widget.find(".datepicker-years").find("th:eq(2)").addClass("disabled")}year-=1;for(var i=-1;i<11;i++){html+='<span class="year'+(i===-1||i===10?" old":"")+(currentYear===year?" active":"")+(year<startYear||year>endYear?" disabled":"")+'">'+year+"</span>";year+=1}yearCont.html(html)},fillHours:function(){var table=this.widget.find(".timepicker .timepicker-hours table");table.parent().hide();var html="";if(this.options.pick12HourFormat){var current=1;for(var i=0;i<3;i+=1){html+="<tr>";for(var j=0;j<4;j+=1){var c=current.toString();html+='<td class="hour">'+padLeft(c,2,"0")+"</td>";current++}html+="</tr>"}}else{var current=0;for(var i=0;i<6;i+=1){html+="<tr>";for(var j=0;j<4;j+=1){var c=current.toString();html+='<td class="hour">'+padLeft(c,2,"0")+"</td>";current++}html+="</tr>"}}table.html(html)},fillMinutes:function(){var table=this.widget.find(".timepicker .timepicker-minutes table");table.parent().hide();var html="";var current=0;for(var i=0;i<5;i++){html+="<tr>";for(var j=0;j<4;j+=1){var c=current.toString();html+='<td class="minute">'+padLeft(c,2,"0")+"</td>";current+=3}html+="</tr>"}table.html(html)},fillSeconds:function(){var table=this.widget.find(".timepicker .timepicker-seconds table");table.parent().hide();var html="";var current=0;for(var i=0;i<5;i++){html+="<tr>";for(var j=0;j<4;j+=1){var c=current.toString();html+='<td class="second">'+padLeft(c,2,"0")+"</td>";current+=3}html+="</tr>"}table.html(html)},fillTime:function(){if(!this._date)return;var timeComponents=this.widget.find(".timepicker span[data-time-component]");var table=timeComponents.closest("table");var is12HourFormat=this.options.pick12HourFormat;var hour=this._date.getUTCHours();var period="AM";if(is12HourFormat){if(hour>=12)period="PM";if(hour===0)hour=12;else if(hour!=12)hour=hour%12;this.widget.find(".timepicker [data-action=togglePeriod]").text(period)}hour=padLeft(hour.toString(),2,"0");var minute=padLeft(this._date.getUTCMinutes().toString(),2,"0");var second=padLeft(this._date.getUTCSeconds().toString(),2,"0");timeComponents.filter("[data-time-component=hours]").text(hour);timeComponents.filter("[data-time-component=minutes]").text(minute);timeComponents.filter("[data-time-component=seconds]").text(second)},click:function(e){e.stopPropagation();e.preventDefault();this._unset=false;var target=$(e.target).closest("span, td, th");if(target.length===1){if(!target.is(".disabled")){switch(target[0].nodeName.toLowerCase()){case"th":switch(target[0].className){case"switch":this.showMode(1);break;case"prev":case"next":var vd=this.viewDate;var navFnc=DPGlobal.modes[this.viewMode].navFnc;var step=DPGlobal.modes[this.viewMode].navStep;if(target[0].className==="prev")step=step*-1;vd["set"+navFnc](vd["get"+navFnc]()+step);this.fillDate();break}break;case"span":if(target.is(".month")){var month=target.parent().find("span").index(target);this.viewDate.setUTCMonth(month)}else{var year=parseInt(target.text(),10)||0;this.viewDate.setUTCFullYear(year)}if(this.viewMode!==0){this._date=UTCDate(this.viewDate.getUTCFullYear(),this.viewDate.getUTCMonth(),this.viewDate.getUTCDate(),this._date.getUTCHours(),this._date.getUTCMinutes(),this._date.getUTCSeconds(),this._date.getUTCMilliseconds());this.notifyChange()}this.showMode(-1);this.fillDate();break;case"td":if(target.is(".day")){var day=parseInt(target.text(),10)||1;var month=this.viewDate.getUTCMonth();var year=this.viewDate.getUTCFullYear();if(target.is(".old")){if(month===0){month=11;year-=1}else{month-=1}}else if(target.is(".new")){if(month==11){month=0;year+=1}else{month+=1}}this._date=UTCDate(year,month,day,this._date.getUTCHours(),this._date.getUTCMinutes(),this._date.getUTCSeconds(),this._date.getUTCMilliseconds());this.viewDate=UTCDate(year,month,Math.min(28,day),0,0,0,0);this.fillDate();this.set();this.notifyChange()}break}}}},actions:{incrementHours:function(e){this._date.setUTCHours(this._date.getUTCHours()+1)},incrementMinutes:function(e){this._date.setUTCMinutes(this._date.getUTCMinutes()+1)},incrementSeconds:function(e){this._date.setUTCSeconds(this._date.getUTCSeconds()+1)},decrementHours:function(e){this._date.setUTCHours(this._date.getUTCHours()-1)},decrementMinutes:function(e){this._date.setUTCMinutes(this._date.getUTCMinutes()-1)},decrementSeconds:function(e){this._date.setUTCSeconds(this._date.getUTCSeconds()-1)},togglePeriod:function(e){var hour=this._date.getUTCHours();if(hour>=12)hour-=12;else hour+=12;this._date.setUTCHours(hour)},showPicker:function(){this.widget.find(".timepicker > div:not(.timepicker-picker)").hide();this.widget.find(".timepicker .timepicker-picker").show()},showHours:function(){this.widget.find(".timepicker .timepicker-picker").hide();this.widget.find(".timepicker .timepicker-hours").show()},showMinutes:function(){this.widget.find(".timepicker .timepicker-picker").hide();this.widget.find(".timepicker .timepicker-minutes").show()},showSeconds:function(){this.widget.find(".timepicker .timepicker-picker").hide();this.widget.find(".timepicker .timepicker-seconds").show()},selectHour:function(e){var tgt=$(e.target);var value=parseInt(tgt.text(),10);if(this.options.pick12HourFormat){var current=this._date.getUTCHours();if(current>=12){if(value!=12)value=(value+12)%24}else{if(value===12)value=0;else value=value%12}}this._date.setUTCHours(value);this.actions.showPicker.call(this)},selectMinute:function(e){var tgt=$(e.target);var value=parseInt(tgt.text(),10);this._date.setUTCMinutes(value);this.actions.showPicker.call(this)},selectSecond:function(e){var tgt=$(e.target);var value=parseInt(tgt.text(),10);this._date.setUTCSeconds(value);this.actions.showPicker.call(this)}},doAction:function(e){e.stopPropagation();e.preventDefault();if(!this._date)this._date=UTCDate(1970,0,0,0,0,0,0);var action=$(e.currentTarget).data("action");var rv=this.actions[action].apply(this,arguments);this.set();this.fillTime();this.notifyChange();return rv},stopEvent:function(e){e.stopPropagation();e.preventDefault()},keydown:function(e){var self=this,k=e.which,input=$(e.target);if(k==8||k==46){setTimeout(function(){self._resetMaskPos(input)})}},keypress:function(e){var k=e.which;if(k==8||k==46){return}var input=$(e.target);var c=String.fromCharCode(k);var val=input.val()||"";val+=c;var mask=this._mask[this._maskPos];if(!mask){return false}if(mask.end!=val.length){return}if(!mask.pattern.test(val.slice(mask.start))){val=val.slice(0,val.length-1);while((mask=this._mask[this._maskPos])&&mask.character){val+=mask.character;this._maskPos++}val+=c;if(mask.end!=val.length){input.val(val);return false}else{if(!mask.pattern.test(val.slice(mask.start))){input.val(val.slice(0,mask.start));return false}else{input.val(val);this._maskPos++;return false}}}else{this._maskPos++}},change:function(e){var input=$(e.target);var val=input.val();if(this._formatPattern.test(val)){this.update();this.setValue(this._date.getTime());this.notifyChange();this.set()}else if(val&&val.trim()){this.setValue(this._date.getTime());if(this._date)this.set();else input.val("")}else{if(this._date){this.setValue(null);this.notifyChange();this._unset=true}}this._resetMaskPos(input)},showMode:function(dir){if(dir){this.viewMode=Math.max(this.minViewMode,Math.min(2,this.viewMode+dir))}this.widget.find(".datepicker > div").hide().filter(".datepicker-"+DPGlobal.modes[this.viewMode].clsName).show()},destroy:function(){this._detachDatePickerEvents();this._detachDatePickerGlobalEvents();this.widget.remove();this.$element.removeData("datetimepicker");this.component.removeData("datetimepicker")},formatDate:function(d){return this.format.replace(formatReplacer,function(match){var methodName,property,rv,len=match.length;if(match==="ms")len=1;property=dateFormatComponents[match].property;if(property==="Hours12"){rv=d.getUTCHours();if(rv===0)rv=12;else if(rv!==12)rv=rv%12}else if(property==="Period12"){if(d.getUTCHours()>=12)return"PM";else return"AM"}else{methodName="get"+property;rv=d[methodName]()}if(methodName==="getUTCMonth")rv=rv+1;if(methodName==="getUTCYear")rv=rv+1900-2e3;return padLeft(rv.toString(),len,"0")})},parseDate:function(str){var match,i,property,methodName,value,parsed={};if(!(match=this._formatPattern.exec(str)))return null;for(i=1;i<match.length;i++){property=this._propertiesByIndex[i];if(!property)continue;value=match[i];if(/^\d+$/.test(value))value=parseInt(value,10);parsed[property]=value}return this._finishParsingDate(parsed)},_resetMaskPos:function(input){var val=input.val();for(var i=0;i<this._mask.length;i++){if(this._mask[i].end>val.length){this._maskPos=i;break}else if(this._mask[i].end===val.length){this._maskPos=i+1;break}}},_finishParsingDate:function(parsed){var year,month,date,hours,minutes,seconds,milliseconds;year=parsed.UTCFullYear;if(parsed.UTCYear)year=2e3+parsed.UTCYear;if(!year)year=1970;if(parsed.UTCMonth)month=parsed.UTCMonth-1;else month=0;date=parsed.UTCDate||1;hours=parsed.UTCHours||0;minutes=parsed.UTCMinutes||0;seconds=parsed.UTCSeconds||0;milliseconds=parsed.UTCMilliseconds||0;if(parsed.Hours12){hours=parsed.Hours12}if(parsed.Period12){if(/pm/i.test(parsed.Period12)){if(hours!=12)hours=(hours+12)%24}else{hours=hours%12}}return UTCDate(year,month,date,hours,minutes,seconds,milliseconds)},_compileFormat:function(){var match,component,components=[],mask=[],str=this.format,propertiesByIndex={},i=0,pos=0;while(match=formatComponent.exec(str)){component=match[0];if(component in dateFormatComponents){i++;propertiesByIndex[i]=dateFormatComponents[component].property;components.push("\\s*"+dateFormatComponents[component].getPattern(this)+"\\s*");mask.push({pattern:new RegExp(dateFormatComponents[component].getPattern(this)),property:dateFormatComponents[component].property,start:pos,end:pos+=component.length})}else{components.push(escapeRegExp(component));mask.push({pattern:new RegExp(escapeRegExp(component)),character:component,start:pos,end:++pos})}str=str.slice(component.length)}this._mask=mask;this._maskPos=0;this._formatPattern=new RegExp("^\\s*"+components.join("")+"\\s*$");this._propertiesByIndex=propertiesByIndex},_attachDatePickerEvents:function(){var self=this;this.widget.on("click",".datepicker *",$.proxy(this.click,this));this.widget.on("click","[data-action]",$.proxy(this.doAction,this));this.widget.on("mousedown",$.proxy(this.stopEvent,this));if(this.pickDate&&this.pickTime){this.widget.on("click.togglePicker",".accordion-toggle",function(e){e.stopPropagation();var $this=$(this);var $parent=$this.closest("ul");var expanded=$parent.find(".in");var closed=$parent.find(".collapse:not(.in)");if(expanded&&expanded.length){var collapseData=expanded.data("collapse");if(collapseData&&collapseData.transitioning)return;expanded.collapse("hide");closed.collapse("show");$this.find("span").toggleClass(self.timeIcon+" "+self.dateIcon);self.$element.find(".input-group-addon span").toggleClass(self.timeIcon+" "+self.dateIcon)}})}if(this.isInput){this.$element.on({focus:$.proxy(this.show,this),change:$.proxy(this.change,this)});if(this.options.maskInput){this.$element.on({keydown:$.proxy(this.keydown,this),keypress:$.proxy(this.keypress,this)})}}else{this.$element.on({change:$.proxy(this.change,this)},"input");if(this.options.maskInput){this.$element.on({keydown:$.proxy(this.keydown,this),keypress:$.proxy(this.keypress,this)},"input")}if(this.component){this.component.on("click",$.proxy(this.show,this))}else{this.$element.on("click",$.proxy(this.show,this))}}},_attachDatePickerGlobalEvents:function(){$(window).on("resize.datetimepicker"+this.id,$.proxy(this.place,this));if(!this.isInput){$(document).on("mousedown.datetimepicker"+this.id,$.proxy(this.hide,this))}},_detachDatePickerEvents:function(){this.widget.off("click",".datepicker *",this.click);this.widget.off("click","[data-action]");this.widget.off("mousedown",this.stopEvent);if(this.pickDate&&this.pickTime){this.widget.off("click.togglePicker")}if(this.isInput){this.$element.off({focus:this.show,change:this.change});if(this.options.maskInput){this.$element.off({keydown:this.keydown,keypress:this.keypress})}}else{this.$element.off({change:this.change},"input");if(this.options.maskInput){this.$element.off({keydown:this.keydown,keypress:this.keypress},"input")}if(this.component){this.component.off("click",this.show)}else{this.$element.off("click",this.show)}}},_detachDatePickerGlobalEvents:function(){$(window).off("resize.datetimepicker"+this.id);if(!this.isInput){$(document).off("mousedown.datetimepicker"+this.id)}},_isInFixed:function(){if(this.$element){var parents=this.$element.parents();var inFixed=false;for(var i=0;i<parents.length;i++){if($(parents[i]).css("position")=="fixed"){inFixed=true;break}}return inFixed}else{return false}}};$.fn.datetimepicker=function(option,val){return this.each(function(){var $this=$(this),data=$this.data("datetimepicker"),options=typeof option==="object"&&option;if(!data){$this.data("datetimepicker",data=new DateTimePicker(this,$.extend({},$.fn.datetimepicker.defaults,options)))}if(typeof option==="string")data[option](val)})};$.fn.datetimepicker.defaults={maskInput:false,pickDate:true,pickTime:true,pick12HourFormat:false,pickSeconds:true,startDate:-Infinity,endDate:Infinity,collapse:true};$.fn.datetimepicker.Constructor=DateTimePicker;var dpgId=0;var dates=$.fn.datetimepicker.dates={en:{days:["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"],daysShort:["Sun","Mon","Tue","Wed","Thu","Fri","Sat","Sun"],daysMin:["Su","Mo","Tu","We","Th","Fr","Sa","Su"],months:["January","February","March","April","May","June","July","August","September","October","November","December"],monthsShort:["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]}};var dateFormatComponents={dd:{property:"UTCDate",getPattern:function(){return"(0?[1-9]|[1-2][0-9]|3[0-1])\\b"}},MM:{property:"UTCMonth",getPattern:function(){return"(0?[1-9]|1[0-2])\\b"}},yy:{property:"UTCYear",getPattern:function(){return"(\\d{2})\\b"}},yyyy:{property:"UTCFullYear",getPattern:function(){return"(\\d{4})\\b"}},hh:{property:"UTCHours",getPattern:function(){return"(0?[0-9]|1[0-9]|2[0-3])\\b"}},mm:{property:"UTCMinutes",getPattern:function(){return"(0?[0-9]|[1-5][0-9])\\b"}},ss:{property:"UTCSeconds",getPattern:function(){return"(0?[0-9]|[1-5][0-9])\\b"}},ms:{property:"UTCMilliseconds",getPattern:function(){return"([0-9]{1,3})\\b"}},HH:{property:"Hours12",getPattern:function(){return"(0?[1-9]|1[0-2])\\b"}},PP:{property:"Period12",getPattern:function(){return"(AM|PM|am|pm|Am|aM|Pm|pM)\\b"}}};var keys=[];for(var k in dateFormatComponents)keys.push(k);keys[keys.length-1]+="\\b";keys.push(".");var formatComponent=new RegExp(keys.join("\\b|"));keys.pop();var formatReplacer=new RegExp(keys.join("\\b|"),"g");function escapeRegExp(str){return str.replace(/[\-\[\]\/\{\}\(\)\*\+\?\.\\\^\$\|]/g,"\\$&")}function padLeft(s,l,c){if(l<s.length)return s;else return Array(l-s.length+1).join(c||" ")+s}function getTemplate(timeIcon,upIcon,downIcon,pickDate,pickTime,is12Hours,showSeconds,collapse){if(pickDate&&pickTime){return'<div class="bootstrap-datetimepicker-widget dropdown-menu" style="z-index:9999 !important;">'+'<ul class="list-unstyled">'+"<li"+(collapse?' class="collapse in"':"")+">"+'<div class="datepicker">'+DPGlobal.template+"</div>"+"</li>"+'<li class="picker-switch accordion-toggle"><a class="btn" style="width:100%"><span class="'+timeIcon+'"></span></a></li>'+"<li"+(collapse?' class="collapse"':"")+">"+'<div class="timepicker">'+TPGlobal.getTemplate(is12Hours,showSeconds,upIcon,downIcon)+"</div>"+"</li>"+"</ul>"+"</div>"}else if(pickTime){return'<div class="bootstrap-datetimepicker-widget dropdown-menu">'+'<div class="timepicker">'+TPGlobal.getTemplate(is12Hours,showSeconds,upIcon,downIcon)+"</div>"+"</div>"}else{return'<div class="bootstrap-datetimepicker-widget dropdown-menu">'+'<div class="datepicker">'+DPGlobal.template+"</div>"+"</div>"}}function UTCDate(){return new Date(Date.UTC.apply(Date,arguments))}var DPGlobal={modes:[{clsName:"days",navFnc:"UTCMonth",navStep:1},{clsName:"months",navFnc:"UTCFullYear",navStep:1},{clsName:"years",navFnc:"UTCFullYear",navStep:10}],isLeapYear:function(year){return year%4===0&&year%100!==0||year%400===0},getDaysInMonth:function(year,month){return[31,DPGlobal.isLeapYear(year)?29:28,31,30,31,30,31,31,30,31,30,31][month]},headTemplate:"<thead>"+"<tr>"+'<th class="prev">&lsaquo;</th>'+'<th colspan="5" class="switch"></th>'+'<th class="next">&rsaquo;</th>'+"</tr>"+"</thead>",contTemplate:'<tbody><tr><td colspan="7"></td></tr></tbody>'};DPGlobal.template='<div class="datepicker-days">'+'<table class="table-condensed">'+DPGlobal.headTemplate+"<tbody></tbody>"+"</table>"+"</div>"+'<div class="datepicker-months">'+'<table class="table-condensed">'+DPGlobal.headTemplate+DPGlobal.contTemplate+"</table>"+"</div>"+'<div class="datepicker-years">'+'<table class="table-condensed">'+DPGlobal.headTemplate+DPGlobal.contTemplate+"</table>"+"</div>";var TPGlobal={hourTemplate:'<span data-action="showHours" data-time-component="hours" class="timepicker-hour"></span>',minuteTemplate:'<span data-action="showMinutes" data-time-component="minutes" class="timepicker-minute"></span>',secondTemplate:'<span data-action="showSeconds" data-time-component="seconds" class="timepicker-second"></span>'};TPGlobal.getTemplate=function(is12Hours,showSeconds,upIcon,downIcon){return'<div class="timepicker-picker">'+'<table class="table-condensed"'+(is12Hours?' data-hour-format="12"':"")+">"+"<tr>"+'<td><a href="#" class="btn btn-default" data-action="incrementHours"><span class="'+upIcon+'"></span></a></td>'+'<td class="separator"></td>'+'<td><a href="#" class="btn btn-default" data-action="incrementMinutes"><span class="'+upIcon+'"></span></a></td>'+(showSeconds?'<td class="separator"></td>'+'<td><a href="#" class="btn btn-default" data-action="incrementSeconds"><span class="'+upIcon+'"></span></a></td>':"")+(is12Hours?'<td class="separator"></td>':"")+"</tr>"+"<tr>"+"<td>"+TPGlobal.hourTemplate+"</td> "+'<td class="separator">:</td>'+"<td>"+TPGlobal.minuteTemplate+"</td> "+(showSeconds?'<td class="separator">:</td>'+"<td>"+TPGlobal.secondTemplate+"</td>":"")+(is12Hours?'<td class="separator"></td>'+"<td>"+'<button type="button" class="btn btn-primary" data-action="togglePeriod"></button>'+"</td>":"")+"</tr>"+"<tr>"+'<td><a href="#" class="btn btn-default" data-action="decrementHours"><span class="'+downIcon+'"></span></a></td>'+'<td class="separator"></td>'+'<td><a href="#" class="btn btn-default" data-action="decrementMinutes"><span class="'+downIcon+'"></span></a></td>'+(showSeconds?'<td class="separator"></td>'+'<td><a href="#" class="btn btn-default" data-action="decrementSeconds"><span class="'+downIcon+'"></span></a></td>':"")+(is12Hours?'<td class="separator"></td>':"")+"</tr>"+"</table>"+"</div>"+'<div class="timepicker-hours" data-action="selectHour">'+'<table class="table-condensed">'+"</table>"+"</div>"+'<div class="timepicker-minutes" data-action="selectMinute">'+'<table class="table-condensed">'+"</table>"+"</div>"+(showSeconds?'<div class="timepicker-seconds" data-action="selectSecond">'+'<table class="table-condensed">'+"</table>"+"</div>":"")}})(require("jquery"));
+
+require.register("./local/datetimepicker", function (exports, module) {
+/*
+//! version : 3.1.3
+=========================================================
+bootstrap-datetimepicker.js
+https://github.com/Eonasdan/bootstrap-datetimepicker
+=========================================================
+The MIT License (MIT)
+
+Copyright (c) 2014 Jonathan Peterson
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+*/
+;(function (root, factory) {
+    'use strict';
+    if (typeof define === 'function' && define.amd) {
+        // AMD is used - Register as an anonymous module.
+        define(['jquery', 'moment'], factory);
+    } else if (typeof exports === 'object') {
+        factory(require('components~jquery@1.11.0'), require('moment~moment@2.8.3'));
+    }
+    else {
+        // Neither AMD or CommonJS used. Use global variables.
+        if (!jQuery) {
+            throw new Error('bootstrap-datetimepicker requires jQuery to be loaded first');
+        }
+        if (!moment) {
+            throw new Error('bootstrap-datetimepicker requires moment.js to be loaded first');
+        }
+        factory(root.jQuery, moment);
+    }
+}(this, function ($, moment) {
+    'use strict';
+    if (typeof moment === 'undefined') {
+        throw new Error('momentjs is required');
+    }
+
+    var dpgId = 0,
+
+    DateTimePicker = function (element, options) {
+        var defaults = $.fn.datetimepicker.defaults,
+
+            icons = {
+                time: 'glyphicon glyphicon-time',
+                date: 'glyphicon glyphicon-calendar',
+                up: 'glyphicon glyphicon-chevron-up',
+                down: 'glyphicon glyphicon-chevron-down'
+            },
+
+            picker = this,
+            errored = false,
+            dDate,
+
+        init = function () {
+            var icon = false, localeData, rInterval;
+            picker.options = $.extend({}, defaults, options);
+            picker.options.icons = $.extend({}, icons, picker.options.icons);
+
+            picker.element = $(element);
+
+            dataToOptions();
+
+            if (!(picker.options.pickTime || picker.options.pickDate)) {
+                throw new Error('Must choose at least one picker');
+            }
+
+            picker.id = dpgId++;
+            moment.locale(picker.options.language);
+            picker.date = moment();
+            picker.unset = false;
+            picker.isInput = picker.element.is('input');
+            picker.component = false;
+
+            if (picker.element.hasClass('input-group')) {
+                if (picker.element.find('.datepickerbutton').size() === 0) {//in case there is more then one 'input-group-addon' Issue #48
+                    picker.component = picker.element.find('[class^="input-group-"]');
+                }
+                else {
+                    picker.component = picker.element.find('.datepickerbutton');
+                }
+            }
+            picker.format = picker.options.format;
+
+            localeData = moment().localeData();
+
+            if (!picker.format) {
+                picker.format = (picker.options.pickDate ? localeData.longDateFormat('L') : '');
+                if (picker.options.pickDate && picker.options.pickTime) {
+                    picker.format += ' ';
+                }
+                picker.format += (picker.options.pickTime ? localeData.longDateFormat('LT') : '');
+                if (picker.options.useSeconds) {
+                    if (localeData.longDateFormat('LT').indexOf(' A') !== -1) {
+                        picker.format = picker.format.split(' A')[0] + ':ss A';
+                    }
+                    else {
+                        picker.format += ':ss';
+                    }
+                }
+            }
+            picker.use24hours = (picker.format.toLowerCase().indexOf('a') < 0 && picker.format.indexOf('h') < 0);
+
+            if (picker.component) {
+                icon = picker.component.find('span');
+            }
+
+            if (picker.options.pickTime) {
+                if (icon) {
+                    icon.addClass(picker.options.icons.time);
+                }
+            }
+            if (picker.options.pickDate) {
+                if (icon) {
+                    icon.removeClass(picker.options.icons.time);
+                    icon.addClass(picker.options.icons.date);
+                }
+            }
+
+            picker.options.widgetParent =
+                typeof picker.options.widgetParent === 'string' && picker.options.widgetParent ||
+                picker.element.parents().filter(function () {
+                    return 'scroll' === $(this).css('overflow-y');
+                }).get(0) ||
+                'body';
+
+            picker.widget = $(getTemplate()).appendTo(picker.options.widgetParent);
+
+            picker.minViewMode = picker.options.minViewMode || 0;
+            if (typeof picker.minViewMode === 'string') {
+                switch (picker.minViewMode) {
+                    case 'months':
+                        picker.minViewMode = 1;
+                        break;
+                    case 'years':
+                        picker.minViewMode = 2;
+                        break;
+                    default:
+                        picker.minViewMode = 0;
+                        break;
+                }
+            }
+            picker.viewMode = picker.options.viewMode || 0;
+            if (typeof picker.viewMode === 'string') {
+                switch (picker.viewMode) {
+                    case 'months':
+                        picker.viewMode = 1;
+                        break;
+                    case 'years':
+                        picker.viewMode = 2;
+                        break;
+                    default:
+                        picker.viewMode = 0;
+                        break;
+                }
+            }
+
+            picker.viewMode = Math.max(picker.viewMode, picker.minViewMode);
+
+            picker.options.disabledDates = indexGivenDates(picker.options.disabledDates);
+            picker.options.enabledDates = indexGivenDates(picker.options.enabledDates);
+
+            picker.startViewMode = picker.viewMode;
+            picker.setMinDate(picker.options.minDate);
+            picker.setMaxDate(picker.options.maxDate);
+            fillDow();
+            fillMonths();
+            fillHours();
+            fillMinutes();
+            fillSeconds();
+            update();
+            showMode();
+            if (!getPickerInput().prop('disabled')) {
+                attachDatePickerEvents();
+            }
+            if (picker.options.defaultDate !== '' && getPickerInput().val() === '') {
+                picker.setValue(picker.options.defaultDate);
+            }
+            if (picker.options.minuteStepping !== 1) {
+                rInterval = picker.options.minuteStepping;
+                picker.date.minutes((Math.round(picker.date.minutes() / rInterval) * rInterval) % 60).seconds(0);
+            }
+        },
+
+        getPickerInput = function () {
+            var input;
+
+            if (picker.isInput) {
+                return picker.element;
+            }
+            input = picker.element.find('.datepickerinput');
+            if (input.size() === 0) {
+                input = picker.element.find('input');
+            }
+            else if (!input.is('input')) {
+                throw new Error('CSS class "datepickerinput" cannot be applied to non input element');
+            }
+            return input;
+        },
+
+        dataToOptions = function () {
+            var eData;
+            if (picker.element.is('input')) {
+                eData = picker.element.data();
+            }
+            else {
+                eData = picker.element.find('input').data();
+            }
+            if (eData.dateFormat !== undefined) {
+                picker.options.format = eData.dateFormat;
+            }
+            if (eData.datePickdate !== undefined) {
+                picker.options.pickDate = eData.datePickdate;
+            }
+            if (eData.datePicktime !== undefined) {
+                picker.options.pickTime = eData.datePicktime;
+            }
+            if (eData.dateUseminutes !== undefined) {
+                picker.options.useMinutes = eData.dateUseminutes;
+            }
+            if (eData.dateUseseconds !== undefined) {
+                picker.options.useSeconds = eData.dateUseseconds;
+            }
+            if (eData.dateUsecurrent !== undefined) {
+                picker.options.useCurrent = eData.dateUsecurrent;
+            }
+            if (eData.calendarWeeks !== undefined) {
+                picker.options.calendarWeeks = eData.calendarWeeks;
+            }
+            if (eData.dateMinutestepping !== undefined) {
+                picker.options.minuteStepping = eData.dateMinutestepping;
+            }
+            if (eData.dateMindate !== undefined) {
+                picker.options.minDate = eData.dateMindate;
+            }
+            if (eData.dateMaxdate !== undefined) {
+                picker.options.maxDate = eData.dateMaxdate;
+            }
+            if (eData.dateShowtoday !== undefined) {
+                picker.options.showToday = eData.dateShowtoday;
+            }
+            if (eData.dateCollapse !== undefined) {
+                picker.options.collapse = eData.dateCollapse;
+            }
+            if (eData.dateLanguage !== undefined) {
+                picker.options.language = eData.dateLanguage;
+            }
+            if (eData.dateDefaultdate !== undefined) {
+                picker.options.defaultDate = eData.dateDefaultdate;
+            }
+            if (eData.dateDisableddates !== undefined) {
+                picker.options.disabledDates = eData.dateDisableddates;
+            }
+            if (eData.dateEnableddates !== undefined) {
+                picker.options.enabledDates = eData.dateEnableddates;
+            }
+            if (eData.dateIcons !== undefined) {
+                picker.options.icons = eData.dateIcons;
+            }
+            if (eData.dateUsestrict !== undefined) {
+                picker.options.useStrict = eData.dateUsestrict;
+            }
+            if (eData.dateDirection !== undefined) {
+                picker.options.direction = eData.dateDirection;
+            }
+            if (eData.dateSidebyside !== undefined) {
+                picker.options.sideBySide = eData.dateSidebyside;
+            }
+            if (eData.dateDaysofweekdisabled !== undefined) {
+                picker.options.daysOfWeekDisabled = eData.dateDaysofweekdisabled;
+            }
+        },
+
+        place = function () {
+            var position = 'absolute',
+                offset = picker.component ? picker.component.offset() : picker.element.offset(),
+                $window = $(window),
+                placePosition;
+
+            picker.width = picker.component ? picker.component.outerWidth() : picker.element.outerWidth();
+            offset.top = offset.top + picker.element.outerHeight();
+
+            if (picker.options.direction === 'up') {
+                placePosition = 'top';
+            } else if (picker.options.direction === 'bottom') {
+                placePosition = 'bottom';
+            } else if (picker.options.direction === 'auto') {
+                if (offset.top + picker.widget.height() > $window.height() + $window.scrollTop() && picker.widget.height() + picker.element.outerHeight() < offset.top) {
+                    placePosition = 'top';
+                } else {
+                    placePosition = 'bottom';
+                }
+            }
+            if (placePosition === 'top') {
+                offset.bottom = $window.height() - offset.top + picker.element.outerHeight() + 3;
+                picker.widget.addClass('top').removeClass('bottom');
+            } else {
+                offset.top += 1;
+                picker.widget.addClass('bottom').removeClass('top');
+            }
+
+            if (picker.options.width !== undefined) {
+                picker.widget.width(picker.options.width);
+            }
+
+            if (picker.options.orientation === 'left') {
+                picker.widget.addClass('left-oriented');
+                offset.left = offset.left - picker.widget.width() + 20;
+            }
+
+            if (isInFixed()) {
+                position = 'fixed';
+                offset.top -= $window.scrollTop();
+                offset.left -= $window.scrollLeft();
+            }
+
+            if ($window.width() < offset.left + picker.widget.outerWidth()) {
+                offset.right = $window.width() - offset.left - picker.width;
+                offset.left = 'auto';
+                picker.widget.addClass('pull-right');
+            } else {
+                offset.right = 'auto';
+                picker.widget.removeClass('pull-right');
+            }
+
+            if (placePosition === 'top') {
+                picker.widget.css({
+                    position: position,
+                    bottom: offset.bottom,
+                    top: 'auto',
+                    left: offset.left,
+                    right: offset.right
+                });
+            } else {
+                picker.widget.css({
+                    position: position,
+                    top: offset.top,
+                    bottom: 'auto',
+                    left: offset.left,
+                    right: offset.right
+                });
+            }
+        },
+
+        notifyChange = function (oldDate, eventType) {
+            if (moment(picker.date).isSame(moment(oldDate)) && !errored) {
+                return;
+            }
+            errored = false;
+            picker.element.trigger({
+                type: 'dp.change',
+                date: moment(picker.date),
+                oldDate: moment(oldDate)
+            });
+
+            if (eventType !== 'change') {
+                picker.element.change();
+            }
+        },
+
+        notifyError = function (date) {
+            errored = true;
+            picker.element.trigger({
+                type: 'dp.error',
+                date: moment(date, picker.format, picker.options.useStrict)
+            });
+        },
+
+        update = function (newDate) {
+            moment.locale(picker.options.language);
+            var dateStr = newDate;
+            if (!dateStr) {
+                dateStr = getPickerInput().val();
+                if (dateStr) {
+                    picker.date = moment(dateStr, picker.format, picker.options.useStrict);
+                }
+                if (!picker.date) {
+                    picker.date = moment();
+                }
+            }
+            picker.viewDate = moment(picker.date).startOf('month');
+            fillDate();
+            fillTime();
+        },
+
+        fillDow = function () {
+            moment.locale(picker.options.language);
+            var html = $('<tr>'), weekdaysMin = moment.weekdaysMin(), i;
+            if (picker.options.calendarWeeks === true) {
+                html.append('<th class="cw">#</th>');
+            }
+            if (moment().localeData()._week.dow === 0) { // starts on Sunday
+                for (i = 0; i < 7; i++) {
+                    html.append('<th class="dow">' + weekdaysMin[i] + '</th>');
+                }
+            } else {
+                for (i = 1; i < 8; i++) {
+                    if (i === 7) {
+                        html.append('<th class="dow">' + weekdaysMin[0] + '</th>');
+                    } else {
+                        html.append('<th class="dow">' + weekdaysMin[i] + '</th>');
+                    }
+                }
+            }
+            picker.widget.find('.datepicker-days thead').append(html);
+        },
+
+        fillMonths = function () {
+            moment.locale(picker.options.language);
+            var html = '', i, monthsShort = moment.monthsShort();
+            for (i = 0; i < 12; i++) {
+                html += '<span class="month">' + monthsShort[i] + '</span>';
+            }
+            picker.widget.find('.datepicker-months td').append(html);
+        },
+
+        fillDate = function () {
+            if (!picker.options.pickDate) {
+                return;
+            }
+            moment.locale(picker.options.language);
+            var year = picker.viewDate.year(),
+                month = picker.viewDate.month(),
+                startYear = picker.options.minDate.year(),
+                startMonth = picker.options.minDate.month(),
+                endYear = picker.options.maxDate.year(),
+                endMonth = picker.options.maxDate.month(),
+                currentDate,
+                prevMonth, nextMonth, html = [], row, clsName, i, days, yearCont, currentYear, months = moment.months();
+
+            picker.widget.find('.datepicker-days').find('.disabled').removeClass('disabled');
+            picker.widget.find('.datepicker-months').find('.disabled').removeClass('disabled');
+            picker.widget.find('.datepicker-years').find('.disabled').removeClass('disabled');
+
+            picker.widget.find('.datepicker-days th:eq(1)').text(
+                months[month] + ' ' + year);
+
+            prevMonth = moment(picker.viewDate, picker.format, picker.options.useStrict).subtract(1, 'months');
+            days = prevMonth.daysInMonth();
+            prevMonth.date(days).startOf('week');
+            if ((year === startYear && month <= startMonth) || year < startYear) {
+                picker.widget.find('.datepicker-days th:eq(0)').addClass('disabled');
+            }
+            if ((year === endYear && month >= endMonth) || year > endYear) {
+                picker.widget.find('.datepicker-days th:eq(2)').addClass('disabled');
+            }
+
+            nextMonth = moment(prevMonth).add(42, 'd');
+            while (prevMonth.isBefore(nextMonth)) {
+                if (prevMonth.weekday() === moment().startOf('week').weekday()) {
+                    row = $('<tr>');
+                    html.push(row);
+                    if (picker.options.calendarWeeks === true) {
+                        row.append('<td class="cw">' + prevMonth.week() + '</td>');
+                    }
+                }
+                clsName = '';
+                if (prevMonth.year() < year || (prevMonth.year() === year && prevMonth.month() < month)) {
+                    clsName += ' old';
+                } else if (prevMonth.year() > year || (prevMonth.year() === year && prevMonth.month() > month)) {
+                    clsName += ' new';
+                }
+                if (prevMonth.isSame(moment({y: picker.date.year(), M: picker.date.month(), d: picker.date.date()}))) {
+                    clsName += ' active';
+                }
+                if (isInDisableDates(prevMonth, 'day') || !isInEnableDates(prevMonth)) {
+                    clsName += ' disabled';
+                }
+                if (picker.options.showToday === true) {
+                    if (prevMonth.isSame(moment(), 'day')) {
+                        clsName += ' today';
+                    }
+                }
+                if (picker.options.daysOfWeekDisabled) {
+                    for (i = 0; i < picker.options.daysOfWeekDisabled.length; i++) {
+                        if (prevMonth.day() === picker.options.daysOfWeekDisabled[i]) {
+                            clsName += ' disabled';
+                            break;
+                        }
+                    }
+                }
+                row.append('<td class="day' + clsName + '">' + prevMonth.date() + '</td>');
+
+                currentDate = prevMonth.date();
+                prevMonth.add(1, 'd');
+
+                if (currentDate === prevMonth.date()) {
+                    prevMonth.add(1, 'd');
+                }
+            }
+            picker.widget.find('.datepicker-days tbody').empty().append(html);
+            currentYear = picker.date.year();
+            months = picker.widget.find('.datepicker-months').find('th:eq(1)').text(year).end().find('span').removeClass('active');
+            if (currentYear === year) {
+                months.eq(picker.date.month()).addClass('active');
+            }
+            if (year - 1 < startYear) {
+                picker.widget.find('.datepicker-months th:eq(0)').addClass('disabled');
+            }
+            if (year + 1 > endYear) {
+                picker.widget.find('.datepicker-months th:eq(2)').addClass('disabled');
+            }
+            for (i = 0; i < 12; i++) {
+                if ((year === startYear && startMonth > i) || (year < startYear)) {
+                    $(months[i]).addClass('disabled');
+                } else if ((year === endYear && endMonth < i) || (year > endYear)) {
+                    $(months[i]).addClass('disabled');
+                }
+            }
+
+            html = '';
+            year = parseInt(year / 10, 10) * 10;
+            yearCont = picker.widget.find('.datepicker-years').find(
+                'th:eq(1)').text(year + '-' + (year + 9)).parents('table').find('td');
+            picker.widget.find('.datepicker-years').find('th').removeClass('disabled');
+            if (startYear > year) {
+                picker.widget.find('.datepicker-years').find('th:eq(0)').addClass('disabled');
+            }
+            if (endYear < year + 9) {
+                picker.widget.find('.datepicker-years').find('th:eq(2)').addClass('disabled');
+            }
+            year -= 1;
+            for (i = -1; i < 11; i++) {
+                html += '<span class="year' + (i === -1 || i === 10 ? ' old' : '') + (currentYear === year ? ' active' : '') + ((year < startYear || year > endYear) ? ' disabled' : '') + '">' + year + '</span>';
+                year += 1;
+            }
+            yearCont.html(html);
+        },
+
+        fillHours = function () {
+            moment.locale(picker.options.language);
+            var table = picker.widget.find('.timepicker .timepicker-hours table'), html = '', current, i, j;
+            table.parent().hide();
+            if (picker.use24hours) {
+                current = 0;
+                for (i = 0; i < 6; i += 1) {
+                    html += '<tr>';
+                    for (j = 0; j < 4; j += 1) {
+                        html += '<td class="hour">' + padLeft(current.toString()) + '</td>';
+                        current++;
+                    }
+                    html += '</tr>';
+                }
+            }
+            else {
+                current = 1;
+                for (i = 0; i < 3; i += 1) {
+                    html += '<tr>';
+                    for (j = 0; j < 4; j += 1) {
+                        html += '<td class="hour">' + padLeft(current.toString()) + '</td>';
+                        current++;
+                    }
+                    html += '</tr>';
+                }
+            }
+            table.html(html);
+        },
+
+        fillMinutes = function () {
+            var table = picker.widget.find('.timepicker .timepicker-minutes table'), html = '', current = 0, i, j, step = picker.options.minuteStepping;
+            table.parent().hide();
+            if (step === 1)  {
+                step = 5;
+            }
+            for (i = 0; i < Math.ceil(60 / step / 4) ; i++) {
+                html += '<tr>';
+                for (j = 0; j < 4; j += 1) {
+                    if (current < 60) {
+                        html += '<td class="minute">' + padLeft(current.toString()) + '</td>';
+                        current += step;
+                    } else {
+                        html += '<td></td>';
+                    }
+                }
+                html += '</tr>';
+            }
+            table.html(html);
+        },
+
+        fillSeconds = function () {
+            var table = picker.widget.find('.timepicker .timepicker-seconds table'), html = '', current = 0, i, j;
+            table.parent().hide();
+            for (i = 0; i < 3; i++) {
+                html += '<tr>';
+                for (j = 0; j < 4; j += 1) {
+                    html += '<td class="second">' + padLeft(current.toString()) + '</td>';
+                    current += 5;
+                }
+                html += '</tr>';
+            }
+            table.html(html);
+        },
+
+        fillTime = function () {
+            if (!picker.date) {
+                return;
+            }
+            var timeComponents = picker.widget.find('.timepicker span[data-time-component]'),
+                hour = picker.date.hours(),
+                period = picker.date.format('A');
+            if (!picker.use24hours) {
+                if (hour === 0) {
+                    hour = 12;
+                } else if (hour !== 12) {
+                    hour = hour % 12;
+                }
+                picker.widget.find('.timepicker [data-action=togglePeriod]').text(period);
+            }
+            timeComponents.filter('[data-time-component=hours]').text(padLeft(hour));
+            timeComponents.filter('[data-time-component=minutes]').text(padLeft(picker.date.minutes()));
+            timeComponents.filter('[data-time-component=seconds]').text(padLeft(picker.date.second()));
+        },
+
+        click = function (e) {
+            e.stopPropagation();
+            e.preventDefault();
+            picker.unset = false;
+            var target = $(e.target).closest('span, td, th'), month, year, step, day, oldDate = moment(picker.date);
+            if (target.length === 1) {
+                if (!target.is('.disabled')) {
+                    switch (target[0].nodeName.toLowerCase()) {
+                        case 'th':
+                            switch (target[0].className) {
+                                case 'picker-switch':
+                                    showMode(1);
+                                    break;
+                                case 'prev':
+                                case 'next':
+                                    step = dpGlobal.modes[picker.viewMode].navStep;
+                                    if (target[0].className === 'prev') {
+                                        step = step * -1;
+                                    }
+                                    picker.viewDate.add(step, dpGlobal.modes[picker.viewMode].navFnc);
+                                    fillDate();
+                                    break;
+                            }
+                            break;
+                        case 'span':
+                            if (target.is('.month')) {
+                                month = target.parent().find('span').index(target);
+                                picker.viewDate.month(month);
+                            } else {
+                                year = parseInt(target.text(), 10) || 0;
+                                picker.viewDate.year(year);
+                            }
+                            if (picker.viewMode === picker.minViewMode) {
+                                picker.date = moment({
+                                    y: picker.viewDate.year(),
+                                    M: picker.viewDate.month(),
+                                    d: picker.viewDate.date(),
+                                    h: picker.date.hours(),
+                                    m: picker.date.minutes(),
+                                    s: picker.date.seconds()
+                                });
+                                set();
+                                notifyChange(oldDate, e.type);
+                            }
+                            showMode(-1);
+                            fillDate();
+                            break;
+                        case 'td':
+                            if (target.is('.day')) {
+                                day = parseInt(target.text(), 10) || 1;
+                                month = picker.viewDate.month();
+                                year = picker.viewDate.year();
+                                if (target.is('.old')) {
+                                    if (month === 0) {
+                                        month = 11;
+                                        year -= 1;
+                                    } else {
+                                        month -= 1;
+                                    }
+                                } else if (target.is('.new')) {
+                                    if (month === 11) {
+                                        month = 0;
+                                        year += 1;
+                                    } else {
+                                        month += 1;
+                                    }
+                                }
+                                picker.date = moment({
+                                    y: year,
+                                    M: month,
+                                    d: day,
+                                    h: picker.date.hours(),
+                                    m: picker.date.minutes(),
+                                    s: picker.date.seconds()
+                                }
+                                );
+                                picker.viewDate = moment({
+                                    y: year, M: month, d: Math.min(28, day)
+                                });
+                                fillDate();
+                                set();
+                                notifyChange(oldDate, e.type);
+                            }
+                            break;
+                    }
+                }
+            }
+        },
+
+        actions = {
+            incrementHours: function () {
+                checkDate('add', 'hours', 1);
+            },
+
+            incrementMinutes: function () {
+                checkDate('add', 'minutes', picker.options.minuteStepping);
+            },
+
+            incrementSeconds: function () {
+                checkDate('add', 'seconds', 1);
+            },
+
+            decrementHours: function () {
+                checkDate('subtract', 'hours', 1);
+            },
+
+            decrementMinutes: function () {
+                checkDate('subtract', 'minutes', picker.options.minuteStepping);
+            },
+
+            decrementSeconds: function () {
+                checkDate('subtract', 'seconds', 1);
+            },
+
+            togglePeriod: function () {
+                var hour = picker.date.hours();
+                if (hour >= 12) {
+                    hour -= 12;
+                } else {
+                    hour += 12;
+                }
+                picker.date.hours(hour);
+            },
+
+            showPicker: function () {
+                picker.widget.find('.timepicker > div:not(.timepicker-picker)').hide();
+                picker.widget.find('.timepicker .timepicker-picker').show();
+            },
+
+            showHours: function () {
+                picker.widget.find('.timepicker .timepicker-picker').hide();
+                picker.widget.find('.timepicker .timepicker-hours').show();
+            },
+
+            showMinutes: function () {
+                picker.widget.find('.timepicker .timepicker-picker').hide();
+                picker.widget.find('.timepicker .timepicker-minutes').show();
+            },
+
+            showSeconds: function () {
+                picker.widget.find('.timepicker .timepicker-picker').hide();
+                picker.widget.find('.timepicker .timepicker-seconds').show();
+            },
+
+            selectHour: function (e) {
+                var hour = parseInt($(e.target).text(), 10);
+                if (!picker.use24hours) {
+                    if (picker.date.hours() >= 12) {
+                        if (hour !== 12) {
+                            hour += 12;
+                        }
+                    } else {
+                        if (hour === 12) {
+                            hour = 0;
+                        }
+                    }
+                }
+                picker.date.hours(hour);
+                actions.showPicker.call(picker);
+            },
+
+            selectMinute: function (e) {
+                picker.date.minutes(parseInt($(e.target).text(), 10));
+                actions.showPicker.call(picker);
+            },
+
+            selectSecond: function (e) {
+                picker.date.seconds(parseInt($(e.target).text(), 10));
+                actions.showPicker.call(picker);
+            }
+        },
+
+        doAction = function (e) {
+            var oldDate = moment(picker.date),
+                action = $(e.currentTarget).data('action'),
+                rv = actions[action].apply(picker, arguments);
+            stopEvent(e);
+            if (!picker.date) {
+                picker.date = moment({y: 1970});
+            }
+            set();
+            fillTime();
+            notifyChange(oldDate, e.type);
+            return rv;
+        },
+
+        stopEvent = function (e) {
+            e.stopPropagation();
+            e.preventDefault();
+        },
+
+        keydown = function (e) {
+            if (e.keyCode === 27) { // allow escape to hide picker
+                picker.hide();
+            }
+        },
+
+        change = function (e) {
+            moment.locale(picker.options.language);
+            var input = $(e.target), oldDate = moment(picker.date), newDate = moment(input.val(), picker.format, picker.options.useStrict);
+            if (newDate.isValid() && !isInDisableDates(newDate) && isInEnableDates(newDate)) {
+                update();
+                picker.setValue(newDate);
+                notifyChange(oldDate, e.type);
+                set();
+            }
+            else {
+                picker.viewDate = oldDate;
+                picker.unset = true;
+                notifyChange(oldDate, e.type);
+                notifyError(newDate);
+            }
+        },
+
+        showMode = function (dir) {
+            if (dir) {
+                picker.viewMode = Math.max(picker.minViewMode, Math.min(2, picker.viewMode + dir));
+            }
+            picker.widget.find('.datepicker > div').hide().filter('.datepicker-' + dpGlobal.modes[picker.viewMode].clsName).show();
+        },
+
+        attachDatePickerEvents = function () {
+            var $this, $parent, expanded, closed, collapseData;
+            picker.widget.on('click', '.datepicker *', $.proxy(click, this)); // this handles date picker clicks
+            picker.widget.on('click', '[data-action]', $.proxy(doAction, this)); // this handles time picker clicks
+            picker.widget.on('mousedown', $.proxy(stopEvent, this));
+            picker.element.on('keydown', $.proxy(keydown, this));
+            if (picker.options.pickDate && picker.options.pickTime) {
+                picker.widget.on('click.togglePicker', '.accordion-toggle', function (e) {
+                    e.stopPropagation();
+                    $this = $(this);
+                    $parent = $this.closest('ul');
+                    expanded = $parent.find('.in');
+                    closed = $parent.find('.collapse:not(.in)');
+
+                    if (expanded && expanded.length) {
+                        collapseData = expanded.data('collapse');
+                        if (collapseData && collapseData.transitioning) {
+                            return;
+                        }
+                        expanded.collapse('hide');
+                        closed.collapse('show');
+                        $this.find('span').toggleClass(picker.options.icons.time + ' ' + picker.options.icons.date);
+                        if (picker.component) {
+                            picker.component.find('span').toggleClass(picker.options.icons.time + ' ' + picker.options.icons.date);
+                        }
+                    }
+                });
+            }
+            if (picker.isInput) {
+                picker.element.on({
+                    'click': $.proxy(picker.show, this),
+                    'focus': $.proxy(picker.show, this),
+                    'change': $.proxy(change, this),
+                    'blur': $.proxy(picker.hide, this)
+                });
+            } else {
+                picker.element.on({
+                    'change': $.proxy(change, this)
+                }, 'input');
+                if (picker.component) {
+                    picker.component.on('click', $.proxy(picker.show, this));
+                    picker.component.on('mousedown', $.proxy(stopEvent, this));
+                } else {
+                    picker.element.on('click', $.proxy(picker.show, this));
+                }
+            }
+        },
+
+        attachDatePickerGlobalEvents = function () {
+            $(window).on(
+                'resize.datetimepicker' + picker.id, $.proxy(place, this));
+            if (!picker.isInput) {
+                $(document).on(
+                    'mousedown.datetimepicker' + picker.id, $.proxy(picker.hide, this));
+            }
+        },
+
+        detachDatePickerEvents = function () {
+            picker.widget.off('click', '.datepicker *', picker.click);
+            picker.widget.off('click', '[data-action]');
+            picker.widget.off('mousedown', picker.stopEvent);
+            if (picker.options.pickDate && picker.options.pickTime) {
+                picker.widget.off('click.togglePicker');
+            }
+            if (picker.isInput) {
+                picker.element.off({
+                    'focus': picker.show,
+                    'change': change,
+                    'click': picker.show,
+                    'blur' : picker.hide
+                });
+            } else {
+                picker.element.off({
+                    'change': change
+                }, 'input');
+                if (picker.component) {
+                    picker.component.off('click', picker.show);
+                    picker.component.off('mousedown', picker.stopEvent);
+                } else {
+                    picker.element.off('click', picker.show);
+                }
+            }
+        },
+
+        detachDatePickerGlobalEvents = function () {
+            $(window).off('resize.datetimepicker' + picker.id);
+            if (!picker.isInput) {
+                $(document).off('mousedown.datetimepicker' + picker.id);
+            }
+        },
+
+        isInFixed = function () {
+            if (picker.element) {
+                var parents = picker.element.parents(), inFixed = false, i;
+                for (i = 0; i < parents.length; i++) {
+                    if ($(parents[i]).css('position') === 'fixed') {
+                        inFixed = true;
+                        break;
+                    }
+                }
+                return inFixed;
+            } else {
+                return false;
+            }
+        },
+
+        set = function () {
+            moment.locale(picker.options.language);
+            var formatted = '';
+            if (!picker.unset) {
+                formatted = moment(picker.date).format(picker.format);
+            }
+            getPickerInput().val(formatted);
+            picker.element.data('date', formatted);
+            if (!picker.options.pickTime) {
+                picker.hide();
+            }
+        },
+
+        checkDate = function (direction, unit, amount) {
+            moment.locale(picker.options.language);
+            var newDate;
+            if (direction === 'add') {
+                newDate = moment(picker.date);
+                if (newDate.hours() === 23) {
+                    newDate.add(amount, unit);
+                }
+                newDate.add(amount, unit);
+            }
+            else {
+                newDate = moment(picker.date).subtract(amount, unit);
+            }
+            if (isInDisableDates(moment(newDate.subtract(amount, unit))) || isInDisableDates(newDate)) {
+                notifyError(newDate.format(picker.format));
+                return;
+            }
+
+            if (direction === 'add') {
+                picker.date.add(amount, unit);
+            }
+            else {
+                picker.date.subtract(amount, unit);
+            }
+            picker.unset = false;
+        },
+
+        isInDisableDates = function (date, timeUnit) {
+            moment.locale(picker.options.language);
+            var maxDate = moment(picker.options.maxDate, picker.format, picker.options.useStrict),
+                minDate = moment(picker.options.minDate, picker.format, picker.options.useStrict);
+
+            if (timeUnit) {
+                maxDate = maxDate.endOf(timeUnit);
+                minDate = minDate.startOf(timeUnit);
+            }
+
+            if (date.isAfter(maxDate) || date.isBefore(minDate)) {
+                return true;
+            }
+            if (picker.options.disabledDates === false) {
+                return false;
+            }
+            return picker.options.disabledDates[date.format('YYYY-MM-DD')] === true;
+        },
+        isInEnableDates = function (date) {
+            moment.locale(picker.options.language);
+            if (picker.options.enabledDates === false) {
+                return true;
+            }
+            return picker.options.enabledDates[date.format('YYYY-MM-DD')] === true;
+        },
+
+        indexGivenDates = function (givenDatesArray) {
+            // Store given enabledDates and disabledDates as keys.
+            // This way we can check their existence in O(1) time instead of looping through whole array.
+            // (for example: picker.options.enabledDates['2014-02-27'] === true)
+            var givenDatesIndexed = {}, givenDatesCount = 0, i;
+            for (i = 0; i < givenDatesArray.length; i++) {
+                if (moment.isMoment(givenDatesArray[i]) || givenDatesArray[i] instanceof Date) {
+                    dDate = moment(givenDatesArray[i]);
+                } else {
+                    dDate = moment(givenDatesArray[i], picker.format, picker.options.useStrict);
+                }
+                if (dDate.isValid()) {
+                    givenDatesIndexed[dDate.format('YYYY-MM-DD')] = true;
+                    givenDatesCount++;
+                }
+            }
+            if (givenDatesCount > 0) {
+                return givenDatesIndexed;
+            }
+            return false;
+        },
+
+        padLeft = function (string) {
+            string = string.toString();
+            if (string.length >= 2) {
+                return string;
+            }
+            return '0' + string;
+        },
+
+        getTemplate = function () {
+            var
+                headTemplate =
+                        '<thead>' +
+                            '<tr>' +
+                                '<th class="prev">&lsaquo;</th><th colspan="' + (picker.options.calendarWeeks ? '6' : '5') + '" class="picker-switch"></th><th class="next">&rsaquo;</th>' +
+                            '</tr>' +
+                        '</thead>',
+                contTemplate =
+                        '<tbody><tr><td colspan="' + (picker.options.calendarWeeks ? '8' : '7') + '"></td></tr></tbody>',
+                template = '<div class="datepicker-days">' +
+                    '<table class="table-condensed">' + headTemplate + '<tbody></tbody></table>' +
+                '</div>' +
+                '<div class="datepicker-months">' +
+                    '<table class="table-condensed">' + headTemplate + contTemplate + '</table>' +
+                '</div>' +
+                '<div class="datepicker-years">' +
+                    '<table class="table-condensed">' + headTemplate + contTemplate + '</table>' +
+                '</div>',
+                ret = '';
+            if (picker.options.pickDate && picker.options.pickTime) {
+                ret = '<div class="bootstrap-datetimepicker-widget' + (picker.options.sideBySide ? ' timepicker-sbs' : '') + (picker.use24hours ? ' usetwentyfour' : '') + ' dropdown-menu" style="z-index:9999 !important;">';
+                if (picker.options.sideBySide) {
+                    ret += '<div class="row">' +
+                       '<div class="col-sm-6 datepicker">' + template + '</div>' +
+                       '<div class="col-sm-6 timepicker">' + tpGlobal.getTemplate() + '</div>' +
+                     '</div>';
+                } else {
+                    ret += '<ul class="list-unstyled">' +
+                        '<li' + (picker.options.collapse ? ' class="collapse in"' : '') + '>' +
+                            '<div class="datepicker">' + template + '</div>' +
+                        '</li>' +
+                        '<li class="picker-switch accordion-toggle"><a class="btn" style="width:100%"><span class="' + picker.options.icons.time + '"></span></a></li>' +
+                        '<li' + (picker.options.collapse ? ' class="collapse"' : '') + '>' +
+                            '<div class="timepicker">' + tpGlobal.getTemplate() + '</div>' +
+                        '</li>' +
+                   '</ul>';
+                }
+                ret += '</div>';
+                return ret;
+            }
+            if (picker.options.pickTime) {
+                return (
+                    '<div class="bootstrap-datetimepicker-widget dropdown-menu">' +
+                        '<div class="timepicker">' + tpGlobal.getTemplate() + '</div>' +
+                    '</div>'
+                );
+            }
+            return (
+                '<div class="bootstrap-datetimepicker-widget dropdown-menu">' +
+                    '<div class="datepicker">' + template + '</div>' +
+                '</div>'
+            );
+        },
+
+        dpGlobal = {
+            modes: [
+                {
+                    clsName: 'days',
+                    navFnc: 'month',
+                    navStep: 1
+                },
+                {
+                    clsName: 'months',
+                    navFnc: 'year',
+                    navStep: 1
+                },
+                {
+                    clsName: 'years',
+                    navFnc: 'year',
+                    navStep: 10
+                }
+            ]
+        },
+
+        tpGlobal = {
+            hourTemplate: '<span data-action="showHours"   data-time-component="hours"   class="timepicker-hour"></span>',
+            minuteTemplate: '<span data-action="showMinutes" data-time-component="minutes" class="timepicker-minute"></span>',
+            secondTemplate: '<span data-action="showSeconds"  data-time-component="seconds" class="timepicker-second"></span>'
+        };
+
+        tpGlobal.getTemplate = function () {
+            return (
+                '<div class="timepicker-picker">' +
+                    '<table class="table-condensed">' +
+                        '<tr>' +
+                            '<td><a href="#" class="btn" data-action="incrementHours"><span class="' + picker.options.icons.up + '"></span></a></td>' +
+                            '<td class="separator"></td>' +
+                            '<td>' + (picker.options.useMinutes ? '<a href="#" class="btn" data-action="incrementMinutes"><span class="' + picker.options.icons.up + '"></span></a>' : '') + '</td>' +
+                            (picker.options.useSeconds ?
+                                '<td class="separator"></td><td><a href="#" class="btn" data-action="incrementSeconds"><span class="' + picker.options.icons.up + '"></span></a></td>' : '') +
+                            (picker.use24hours ? '' : '<td class="separator"></td>') +
+                        '</tr>' +
+                        '<tr>' +
+                            '<td>' + tpGlobal.hourTemplate + '</td> ' +
+                            '<td class="separator">:</td>' +
+                            '<td>' + (picker.options.useMinutes ? tpGlobal.minuteTemplate : '<span class="timepicker-minute">00</span>') + '</td> ' +
+                            (picker.options.useSeconds ?
+                                '<td class="separator">:</td><td>' + tpGlobal.secondTemplate + '</td>' : '') +
+                            (picker.use24hours ? '' : '<td class="separator"></td>' +
+                            '<td><button type="button" class="btn btn-primary" data-action="togglePeriod"></button></td>') +
+                        '</tr>' +
+                        '<tr>' +
+                            '<td><a href="#" class="btn" data-action="decrementHours"><span class="' + picker.options.icons.down + '"></span></a></td>' +
+                            '<td class="separator"></td>' +
+                            '<td>' + (picker.options.useMinutes ? '<a href="#" class="btn" data-action="decrementMinutes"><span class="' + picker.options.icons.down + '"></span></a>' : '') + '</td>' +
+                            (picker.options.useSeconds ?
+                                '<td class="separator"></td><td><a href="#" class="btn" data-action="decrementSeconds"><span class="' + picker.options.icons.down + '"></span></a></td>' : '') +
+                            (picker.use24hours ? '' : '<td class="separator"></td>') +
+                        '</tr>' +
+                    '</table>' +
+                '</div>' +
+                '<div class="timepicker-hours" data-action="selectHour">' +
+                    '<table class="table-condensed"></table>' +
+                '</div>' +
+                '<div class="timepicker-minutes" data-action="selectMinute">' +
+                    '<table class="table-condensed"></table>' +
+                '</div>' +
+                (picker.options.useSeconds ?
+                    '<div class="timepicker-seconds" data-action="selectSecond"><table class="table-condensed"></table></div>' : '')
+            );
+        };
+
+        picker.destroy = function () {
+            detachDatePickerEvents();
+            detachDatePickerGlobalEvents();
+            picker.widget.remove();
+            picker.element.removeData('DateTimePicker');
+            if (picker.component) {
+                picker.component.removeData('DateTimePicker');
+            }
+        };
+
+        picker.show = function (e) {
+            if (getPickerInput().prop('disabled')) {
+                return;
+            }
+            if (picker.options.useCurrent) {
+                if (getPickerInput().val() === '') {
+                    if (picker.options.minuteStepping !== 1) {
+                        var mDate = moment(),
+                        rInterval = picker.options.minuteStepping;
+                        mDate.minutes((Math.round(mDate.minutes() / rInterval) * rInterval) % 60).seconds(0);
+                        picker.setValue(mDate.format(picker.format));
+                    } else {
+                        picker.setValue(moment().format(picker.format));
+                    }
+                    notifyChange('', e.type);
+                }
+            }
+            // if this is a click event on the input field and picker is already open don't hide it
+            if (e && e.type === 'click' && picker.isInput && picker.widget.hasClass('picker-open')) {
+                return;
+            }
+            if (picker.widget.hasClass('picker-open')) {
+                picker.widget.hide();
+                picker.widget.removeClass('picker-open');
+            }
+            else {
+                picker.widget.show();
+                picker.widget.addClass('picker-open');
+            }
+            picker.height = picker.component ? picker.component.outerHeight() : picker.element.outerHeight();
+            place();
+            picker.element.trigger({
+                type: 'dp.show',
+                date: moment(picker.date)
+            });
+            attachDatePickerGlobalEvents();
+            if (e) {
+                stopEvent(e);
+            }
+        };
+
+        picker.disable = function () {
+            var input = getPickerInput();
+            if (input.prop('disabled')) {
+                return;
+            }
+            input.prop('disabled', true);
+            detachDatePickerEvents();
+        };
+
+        picker.enable = function () {
+            var input = getPickerInput();
+            if (!input.prop('disabled')) {
+                return;
+            }
+            input.prop('disabled', false);
+            attachDatePickerEvents();
+        };
+
+        picker.hide = function () {
+            // Ignore event if in the middle of a picker transition
+            var collapse = picker.widget.find('.collapse'), i, collapseData;
+            for (i = 0; i < collapse.length; i++) {
+                collapseData = collapse.eq(i).data('collapse');
+                if (collapseData && collapseData.transitioning) {
+                    return;
+                }
+            }
+            picker.widget.hide();
+            picker.widget.removeClass('picker-open');
+            picker.viewMode = picker.startViewMode;
+            showMode();
+            picker.element.trigger({
+                type: 'dp.hide',
+                date: moment(picker.date)
+            });
+            detachDatePickerGlobalEvents();
+        };
+
+        picker.setValue = function (newDate) {
+            moment.locale(picker.options.language);
+            if (!newDate) {
+                picker.unset = true;
+                set();
+            } else {
+                picker.unset = false;
+            }
+            if (!moment.isMoment(newDate)) {
+                newDate = (newDate instanceof Date) ? moment(newDate) : moment(newDate, picker.format, picker.options.useStrict);
+            } else {
+                newDate = newDate.locale(picker.options.language);
+            }
+            if (newDate.isValid()) {
+                picker.date = newDate;
+                set();
+                picker.viewDate = moment({y: picker.date.year(), M: picker.date.month()});
+                fillDate();
+                fillTime();
+            }
+            else {
+                notifyError(newDate);
+            }
+        };
+
+        picker.getDate = function () {
+            if (picker.unset) {
+                return null;
+            }
+            return moment(picker.date);
+        };
+
+        picker.setDate = function (date) {
+            var oldDate = moment(picker.date);
+            if (!date) {
+                picker.setValue(null);
+            } else {
+                picker.setValue(date);
+            }
+            notifyChange(oldDate, 'function');
+        };
+
+        picker.setDisabledDates = function (dates) {
+            picker.options.disabledDates = indexGivenDates(dates);
+            if (picker.viewDate) {
+                update();
+            }
+        };
+
+        picker.setEnabledDates = function (dates) {
+            picker.options.enabledDates = indexGivenDates(dates);
+            if (picker.viewDate) {
+                update();
+            }
+        };
+
+        picker.setMaxDate = function (date) {
+            if (date === undefined) {
+                return;
+            }
+            if (moment.isMoment(date) || date instanceof Date) {
+                picker.options.maxDate = moment(date);
+            } else {
+                picker.options.maxDate = moment(date, picker.format, picker.options.useStrict);
+            }
+            if (picker.viewDate) {
+                update();
+            }
+        };
+
+        picker.setMinDate = function (date) {
+            if (date === undefined) {
+                return;
+            }
+            if (moment.isMoment(date) || date instanceof Date) {
+                picker.options.minDate = moment(date);
+            } else {
+                picker.options.minDate = moment(date, picker.format, picker.options.useStrict);
+            }
+            if (picker.viewDate) {
+                update();
+            }
+        };
+
+        init();
+    };
+
+    $.fn.datetimepicker = function (options) {
+        return this.each(function () {
+            var $this = $(this),
+                data = $this.data('DateTimePicker');
+            if (!data) {
+                $this.data('DateTimePicker', new DateTimePicker(this, options));
+            }
+        });
+    };
+
+    $.fn.datetimepicker.defaults = {
+        format: false,
+        pickDate: true,
+        pickTime: true,
+        useMinutes: true,
+        useSeconds: false,
+        useCurrent: true,
+        calendarWeeks: false,
+        minuteStepping: 1,
+        minDate: moment({y: 1900}),
+        maxDate: moment().add(100, 'y'),
+        showToday: true,
+        collapse: true,
+        language: moment.locale(),
+        defaultDate: '',
+        disabledDates: false,
+        enabledDates: false,
+        icons: {},
+        useStrict: false,
+        direction: 'auto',
+        sideBySide: false,
+        daysOfWeekDisabled: [],
+        widgetParent: false
+    };
+}));
 
 });
-require.register("otpjs/lib/index.js", function(exports, require, module){
-module.exports.models = require('./models');
-module.exports.views = require('./views');
-module.exports.map_views = require('./map_views');
-module.exports.request_views = require('./request_views');
-module.exports.narrative_views = require('./narrative_views');
-module.exports.topo_views = require('./topo_views');
-module.exports.bike_views = require('./bike_views');
-module.exports.utils = require('./utils');	
+
+require.register("otpjs", function (exports, module) {
+module.exports.models = require('otpjs/lib/models.js');
+module.exports.views = require('otpjs/lib/views.js');
+module.exports.map_views = require('otpjs/lib/map_views.js');
+module.exports.request_views = require('otpjs/lib/request_views.js');
+module.exports.narrative_views = require('otpjs/lib/narrative_views.js');
+module.exports.topo_views = require('otpjs/lib/topo_views.js');
+module.exports.bike_views = require('otpjs/lib/bike_views.js');
+module.exports.utils = require('otpjs/lib/utils.js');	
 });
-require.register("otpjs/lib/models.js", function(exports, require, module){
+
+require.register("otpjs/lib/models.js", function (exports, module) {
 'use strict';
 
-var _ = require('underscore');
-var Backbone = require('backbone');
-var $ = require('jquery');
-var moment = require('moment');
+var _ = require('jashkenas~underscore@1.7.0');
+var Backbone = require('jashkenas~backbone@1.1.2');
+var $ = require('components~jquery@1.11.0');
+var moment = require('moment~moment@2.8.3');
 
-var utils = require('./utils');
+var utils = require('otpjs/lib/utils.js');
 
 module.exports.OtpPlanRequest = Backbone.Model.extend({ 
 
@@ -40306,10 +33505,12 @@ module.exports.OtpPlanRequest = Backbone.Model.extend({
 
         var m = this;
 
-        // don't make complete requests
-        if(!this.attributes.fromPlace || !this.attributes.toPlace)
-          return false;
-
+        // don't make incomplete requests
+        if(!this.attributes.fromPlace || !this.attributes.toPlace){
+          m.trigger('failure');
+          return;
+        }
+          
         $.ajax(this.urlRoot, {dataType: 'jsonp', data: utils.filterParams(this.attributes)})
           .done(function(data) {
             m.trigger('success', m.processRequest(data));
@@ -40343,6 +33544,42 @@ module.exports.OtpPlanRequest = Backbone.Model.extend({
           
           var llStr = this.get('toPlace').split('::')[0].split(',');
           return [ parseFloat(llStr[0]), parseFloat(llStr[1]) ];
+      },
+
+      toQueryString: function() {
+        
+        var params = _.map(this.attributes, function(value, key) {
+          if(value) {
+            return key + "=" + value;
+          }
+          else 
+            return "";
+        }); 
+
+        params = _.filter(params, function(val) {
+          return val != "";
+        });
+
+        return "?" + params.join("&");
+      },
+
+      fromQueryString: function(queryString) {
+
+        var params = queryString.split("&");
+
+        var data = {};
+
+        _.each(params, function(param) {
+
+          var keyValue = param.split("=");
+
+          if(keyValue.lengh = 2) {
+            data[keyValue[0]] = keyValue[1];            
+          }
+
+        });
+
+        this.set(data);
       }
 });
 
@@ -40722,12 +33959,13 @@ module.exports.OtpStops = Backbone.Collection.extend({
 });
 
 });
-require.register("otpjs/lib/views.js", function(exports, require, module){
-var _ = require('underscore');
-var $ = require('jquery');
-var Backbone = require('backbone');
+
+require.register("otpjs/lib/views.js", function (exports, module) {
+var _ = require('jashkenas~underscore@1.7.0');
+var $ = require('components~jquery@1.11.0');
+var Backbone = require('jashkenas~backbone@1.1.2');
 Backbone.$ = $;
-var Handlebars = require('handlebars');
+var Handlebars = require('./local/handlebars');
 
 
 var OtpPlanResponseView = Backbone.View.extend({
@@ -40742,14 +33980,14 @@ var OtpPlanResponseView = Backbone.View.extend({
     render : function() {
 
         if(this.options.narrative) {
-            var narrativeView = new OTP.narrative_views.OtpPlanResponseNarrativeView({
+            this.narrativeView = new OTP.narrative_views.OtpPlanResponseNarrativeView({
                 el: this.options.narrative,
                 model: this.model,
                 autoResize: this.options.autoResize,
                 metric: this.options.metric,
                 showFullDuration: this.options.showFullDuration
             });
-            narrativeView.render();
+            this.narrativeView.render();
         }
 
         if(this.model) {
@@ -40802,12 +34040,13 @@ module.exports.OtpPlanResponseView = OtpPlanResponseView;
 
 
 });
-require.register("otpjs/lib/bike_views.js", function(exports, require, module){
-var _ = require('underscore');
-var $ = require('jquery');
-var Backbone = require('backbone');
+
+require.register("otpjs/lib/bike_views.js", function (exports, module) {
+var _ = require('jashkenas~underscore@1.7.0');
+var $ = require('components~jquery@1.11.0');
+var Backbone = require('jashkenas~backbone@1.1.2');
 Backbone.$ = $;
-var Raphael = require('raphael');
+var Raphael = require('./local/raphael');
 
 
 var OtpBikeTrianglePanel = Backbone.View.extend({
@@ -41074,17 +34313,17 @@ var OtpBikeTrianglePanel = Backbone.View.extend({
 
 module.exports.OtpBikeTrianglePanel = OtpBikeTrianglePanel;
 });
-require.register("otpjs/lib/map_views.js", function(exports, require, module){
-var _ = require('underscore');
-var $ = require('jquery');
-var Backbone = require('backbone');
+
+require.register("otpjs/lib/map_views.js", function (exports, module) {
+var _ = require('jashkenas~underscore@1.7.0');
+var $ = require('components~jquery@1.11.0');
+var Backbone = require('jashkenas~backbone@1.1.2');
 Backbone.$ = $;
 
-var L = require('leaflet');
-require('leaflet.label');
-var Handlebars = require('handlebars');
+require('./local/leaflet.label');
+var Handlebars = require('./local/handlebars');
 
-var utils = require('./utils');
+var utils = require('otpjs/lib/utils.js');
 
 
 /** Map Views **/
@@ -41115,6 +34354,7 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({
             this.render();
             //this.options.map.fitBounds(this.model.getBoundsArray())
         });
+        
         this.listenTo(this.model, "deactivate", this.clearLayers);
 
         this.listenTo(this.model, "mouseenter", function() {
@@ -41329,18 +34569,6 @@ module.exports.OtpItineraryMapView = Backbone.View.extend({
 });
 
 
-/*var StartFlagIcon = L.Icon.extend({
-    options: {
-        iconUrl: 'images/marker-flag-start-shadowed.png',
-        shadowUrl: null,
-        iconSize: new L.Point(48, 49),
-        iconAnchor: new L.Point(46, 42),
-        popupAnchor: new L.Point(0, -16)
-    }
-});*/
-
-
-
 var mapContextMenuTemplate = Handlebars.compile([
     '<div class="otp-mapContextMenu">',
         '<div class="otp-mapContextMenuItem setStartLocation">Set Start Location</div>',
@@ -41536,15 +34764,16 @@ module.exports.OtpStopsResponseMapView = Backbone.View.extend({
     }
 });
 });
-require.register("otpjs/lib/narrative_views.js", function(exports, require, module){
-var _ = require('underscore');
-var $ = require('jquery');
-var Backbone = require('backbone');
-Backbone.$ = $;
-var Handlebars = require('handlebars');
-var moment = require('moment');
 
-var utils = require('./utils');
+require.register("otpjs/lib/narrative_views.js", function (exports, module) {
+var _ = require('jashkenas~underscore@1.7.0');
+var $ = require('components~jquery@1.11.0');
+var Backbone = require('jashkenas~backbone@1.1.2');
+Backbone.$ = $;
+var Handlebars = require('./local/handlebars');
+var moment = require('moment~moment@2.8.3');
+
+var utils = require('otpjs/lib/utils.js');
 
 //var Handlebars = require('handlebars');
 
@@ -41573,7 +34802,6 @@ var OtpPlanResponseNarrativeView = Backbone.View.extend({
     }, 
 
     render : function() {
-    	
 
         if(this.model) {
             this.$el.html(narrativeAdjustTemplate());
@@ -41602,8 +34830,7 @@ var OtpPlanResponseNarrativeView = Backbone.View.extend({
 
     	itinView.render();
     	this.$el.find('.itineraries').append(itinView.el);
-    },
-
+    }
 });
 
 module.exports.OtpPlanResponseNarrativeView = OtpPlanResponseNarrativeView;
@@ -41918,15 +35145,17 @@ var OtpStepNarrativeView = Backbone.View.extend({
 }); module.exports.OtpStepNarrativeView = OtpStepNarrativeView;
 
 });
-require.register("otpjs/lib/request_views.js", function(exports, require, module){
-var _ = require('underscore');
-var $ = require('jquery');
+
+require.register("otpjs/lib/request_views.js", function (exports, module) {
+var _ = require('jashkenas~underscore@1.7.0');
+var $ = require('components~jquery@1.11.0');
 window.jQuery = $;
-var Backbone = require('backbone');
+var Backbone = require('jashkenas~backbone@1.1.2');
 Backbone.$ = $;
-var Handlebars = require('handlebars');
-var select2 = require('select2');
-require('datetimepicker');
+var moment = require('moment~moment@2.8.3');
+var Handlebars = require('./local/handlebars');
+var select2 = require('kpwebb~select2@3.4.8');
+require('./local/datetimepicker');
 
 var requestFormTemplate = Handlebars.compile([
 
@@ -42117,16 +35346,31 @@ var OtpRequestFormView = Backbone.View.extend({
                  view.updateReverseGeocoder('To',  data.attributes.toPlace, select);
                 
             }
+
+            if(_.has(data.changed, 'toPlace') && data.attributes.toPlace && view.selectTo) {
+
+                var select = view.selectTo;
+                 view.updateReverseGeocoder('To',  data.attributes.toPlace, select);
+                
+            }
+
+            view.$('#arriveBy').val(data.attributes.arriveBy);
+            view.$('#mode').val(data.attributes.mode);
+            view.$('#maxWalkDistance').val(data.attributes.maxWalkDistance);
+            view.$('#optimize').val(data.attributes.optimize);
+
+            var date = moment(data.attributes.date, "MM-DD-YYYY").toDate();
+            view.datepicker.setDate(date);
+
+            var time = moment(data.attributes.time, "hh:mm a").toDate();
+            view.timepicker.setDate(time);
+
+            view.updateModeControls();
+           
         });  
     },
 
     updateReverseGeocoder: function (field, latlon, select) {
-
-        if(this.skipReverseGeocode) {
-            this.skipReverseGeocode = false;
-            return;
-        }
-            
 
         var reverseLookup = OTP.config.reverseGeocode;
 
@@ -42192,8 +35436,8 @@ var OtpRequestFormView = Backbone.View.extend({
             pickTime: false
         });
 
-        this.datepicker = this.$('#date').data('datetimepicker');
-        this.datepicker.setLocalDate(new Date());
+        this.datepicker = this.$('#date').data('DateTimePicker');
+        this.datepicker.setDate(new Date());
         this.$('#date').on('changeDate', this.changeForm);
 
         this.$('#time').datetimepicker({
@@ -42202,8 +35446,8 @@ var OtpRequestFormView = Backbone.View.extend({
             pickDate: false
         });
 
-        this.timepicker = this.$('#time').data('datetimepicker');
-        this.timepicker.setLocalDate(new Date());
+        this.timepicker = this.$('#time').data('DateTimePicker');
+        this.timepicker.setDate(new Date());
         this.$('#time').on('changeDate', this.changeForm);
 
         this.bikeTriangle = new OTP.bike_views.OtpBikeTrianglePanel({
@@ -42221,7 +35465,7 @@ var OtpRequestFormView = Backbone.View.extend({
             createSearchChoice : function(term) {
                 if(view.lastResults.length == 0) {
                     var text = term + " (not found)";
-                    return { id: term, text: text };
+                    return { id: "not found", text: text };
                 }
             },
             formatResult: function(object, container, query) {
@@ -42284,7 +35528,7 @@ var OtpRequestFormView = Backbone.View.extend({
             createSearchChoice : function(term) {
                 if(view.lastResults.length == 0) {
                     var text = term + " (not found)";
-                    return { id: term, text: text };
+                    return { id: "not found", text: text };
                 }
             },
             formatResult: function(object, container, query) {
@@ -42338,23 +35582,6 @@ var OtpRequestFormView = Backbone.View.extend({
 
         });
 
-        //this.$('#toPlace').on("select2-loaded", function(e) { alert("loaded");});
-
-        /*this.selectTo = $('#toPlace').selectize({
-            valueField: 'latlon',
-            labelField: 'address',
-            searchField: 'address',
-            loadThrottle: 1000,
-            create: false,
-            render: { option: function(item, escape) {
-                    return view.geocodeItem(item);
-                }
-            },
-            load: function(query, callback) {
-                OTP.geocoder.Geocoder.lookup(query, callback, view.selectTo[0].selectize);
-            }
-        });*/
-
         view.updatingForm = false;
 
         this.changeForm();
@@ -42381,6 +35608,12 @@ var OtpRequestFormView = Backbone.View.extend({
             optimize: this.$('#optimize').val(),
             mode: this.$('#mode').val()
         };
+
+        // skip if either to/from fields are unset
+        if(this.$('#fromPlace').select2("val") == "not found")
+            data.fromPlace = false;
+        if(this.$('#toPlace').select2("val") == "not found") 
+            data.toPlace = false;
 
         var mode = $('#mode').val();
         if(mode.indexOf("BICYCLE") != -1) { 
@@ -42469,15 +35702,14 @@ var OtpRequestFormView = Backbone.View.extend({
 module.exports.OtpRequestFormView = OtpRequestFormView;
 
 });
-require.register("otpjs/lib/topo_views.js", function(exports, require, module){
-var _ = require('underscore');
-var $ = require('jquery');
-var Backbone = require('backbone');
-Backbone.$ = $;
-//var Raphael = require('raphael');
-var L = require('leaflet');
 
-var utils = require('./utils');
+require.register("otpjs/lib/topo_views.js", function (exports, module) {
+var _ = require('jashkenas~underscore@1.7.0');
+var $ = require('components~jquery@1.11.0');
+var Backbone = require('jashkenas~backbone@1.1.2');
+Backbone.$ = $;
+
+var utils = require('otpjs/lib/utils.js');
 
 var getElevation = function(elevCoord) {
     return elevCoord.second * 3.28084;
@@ -42493,6 +35725,7 @@ var OtpItineraryTopoView = Backbone.View.extend({
         this.$el.resize(this.refresh);
 
         this.listenTo(this.model, "activate", this.render);
+        this.listenTo(this.model, "deactivate", this.clear);
     },
 
     render : function() {
@@ -42833,11 +36066,12 @@ var LeafletTopoGraphControl = L.Control.extend({
 module.exports.LeafletTopoGraphControl = LeafletTopoGraphControl;
 
 });
-require.register("otpjs/lib/utils.js", function(exports, require, module){
+
+require.register("otpjs/lib/utils.js", function (exports, module) {
 'use strict';
 
-var _ = require('underscore');
-var moment = require('moment');
+var _ = require('jashkenas~underscore@1.7.0');
+var moment = require('moment~moment@2.8.3');
 
 var filterParams = function(data) {
 
@@ -42958,82 +36192,11 @@ module.exports.distanceString = distanceString;
 
 });
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-require.alias("jashkenas-underscore/underscore.js", "otpjs/deps/underscore/underscore.js");
-require.alias("jashkenas-underscore/underscore.js", "otpjs/deps/underscore/index.js");
-require.alias("jashkenas-underscore/underscore.js", "underscore/index.js");
-require.alias("jashkenas-underscore/underscore.js", "jashkenas-underscore/index.js");
-require.alias("jashkenas-backbone/backbone.js", "otpjs/deps/backbone/backbone.js");
-require.alias("jashkenas-backbone/backbone.js", "otpjs/deps/backbone/index.js");
-require.alias("jashkenas-backbone/backbone.js", "backbone/index.js");
-require.alias("jashkenas-underscore/underscore.js", "jashkenas-backbone/deps/underscore/underscore.js");
-require.alias("jashkenas-underscore/underscore.js", "jashkenas-backbone/deps/underscore/index.js");
-require.alias("jashkenas-underscore/underscore.js", "jashkenas-underscore/index.js");
-require.alias("jashkenas-backbone/backbone.js", "jashkenas-backbone/index.js");
-require.alias("moment-moment/moment.js", "otpjs/deps/moment/moment.js");
-require.alias("moment-moment/moment.js", "otpjs/deps/moment/index.js");
-require.alias("moment-moment/moment.js", "moment/index.js");
-require.alias("moment-moment/moment.js", "moment-moment/index.js");
-require.alias("components-jquery/jquery.js", "otpjs/deps/jquery/jquery.js");
-require.alias("components-jquery/jquery.js", "otpjs/deps/jquery/index.js");
-require.alias("components-jquery/jquery.js", "jquery/index.js");
-require.alias("components-jquery/jquery.js", "components-jquery/index.js");
-require.alias("kpwebb-select2/select2.js", "otpjs/deps/select2/select2.js");
-require.alias("kpwebb-select2/select2_locale_en.js", "otpjs/deps/select2/select2_locale_en.js");
-require.alias("kpwebb-select2/select2.js", "otpjs/deps/select2/index.js");
-require.alias("kpwebb-select2/select2.js", "select2/index.js");
-require.alias("kpwebb-select2/select2.js", "kpwebb-select2/index.js");
-require.alias("leaflet/leaflet-src.js", "otpjs/deps/leaflet/leaflet-src.js");
-require.alias("leaflet/leaflet-src.js", "otpjs/deps/leaflet/index.js");
-require.alias("leaflet/leaflet-src.js", "leaflet/index.js");
-require.alias("leaflet/leaflet-src.js", "leaflet/index.js");
-require.alias("leaflet.label/leaflet.label-src.js", "otpjs/deps/leaflet.label/leaflet.label-src.js");
-require.alias("leaflet.label/leaflet.label-src.js", "otpjs/deps/leaflet.label/index.js");
-require.alias("leaflet.label/leaflet.label-src.js", "leaflet.label/index.js");
-require.alias("leaflet.label/leaflet.label-src.js", "leaflet.label/index.js");
-require.alias("handlebars/handlebars-v1.1.2.js", "otpjs/deps/handlebars/handlebars-v1.1.2.js");
-require.alias("handlebars/handlebars-v1.1.2.js", "otpjs/deps/handlebars/index.js");
-require.alias("handlebars/handlebars-v1.1.2.js", "handlebars/index.js");
-require.alias("handlebars/handlebars-v1.1.2.js", "handlebars/index.js");
-require.alias("raphael/raphael.js", "otpjs/deps/raphael/raphael.js");
-require.alias("raphael/raphael.js", "otpjs/deps/raphael/index.js");
-require.alias("raphael/raphael.js", "raphael/index.js");
-require.alias("raphael/raphael.js", "raphael/index.js");
-require.alias("bootstrap/js/bootstrap.min.js", "otpjs/deps/bootstrap/js/bootstrap.min.js");
-require.alias("bootstrap/js/bootstrap.min.js", "otpjs/deps/bootstrap/index.js");
-require.alias("bootstrap/js/bootstrap.min.js", "bootstrap/index.js");
-require.alias("bootstrap/js/bootstrap.min.js", "bootstrap/index.js");
-require.alias("datetimepicker/bootstrap-datetimepicker.js", "otpjs/deps/datetimepicker/bootstrap-datetimepicker.js");
-require.alias("datetimepicker/bootstrap-datetimepicker.js", "otpjs/deps/datetimepicker/index.js");
-require.alias("datetimepicker/bootstrap-datetimepicker.js", "datetimepicker/index.js");
-require.alias("components-jquery/jquery.js", "datetimepicker/deps/jquery/jquery.js");
-require.alias("components-jquery/jquery.js", "datetimepicker/deps/jquery/index.js");
-require.alias("components-jquery/jquery.js", "components-jquery/index.js");
-require.alias("datetimepicker/bootstrap-datetimepicker.js", "datetimepicker/index.js");
-require.alias("otpjs/lib/index.js", "otpjs/index.js");if (typeof exports == "object") {
+if (typeof exports == "object") {
   module.exports = require("otpjs");
 } else if (typeof define == "function" && define.amd) {
-  define([], function(){ return require("otpjs"); });
+  define("otp", [], function(){ return require("otpjs"); });
 } else {
-  this["otp"] = require("otpjs");
-}})();
+  (this || window)["otp"] = require("otpjs");
+}
+})()
