@@ -29,8 +29,8 @@ server:
 
 otp.js: components $(JS)
 	$(MAKE) lint
-	$(COMPONENT) build --dev --debug --out client/build --prefix '.'
-	$(COMPONENT) build --debug --standalone otp --out . --name otp  --prefix '.'
+	$(COMPONENT) build --dev --debug --out client/build
+	$(COMPONENT) build --debug --standalone otp --out . --name otp
 
 otp.min.js: otp.js
 	$(COMPONENT) build --debug --use component-uglifyjs --standalone otp --out . --name otp.min  --prefix '.'
