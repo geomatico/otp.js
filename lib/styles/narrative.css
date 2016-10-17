@@ -1,0 +1,297 @@
+
+.otp-itinHeader {
+	cursor: pointer;
+	line-height: 1.8em;
+}
+
+.otp-itinHeader-title {
+	border-bottom: 1px solid #888;
+	margin-bottom: .4em;
+}
+
+.otp-itinHeader-preview {
+	margin-bottom: .25em;
+	text-align: center;
+}
+
+.otp-itinHeader-details {
+	font-size: .9em;
+}
+
+.otp-itinHeader .pull-right {
+	text-align: right;
+}
+
+.otp-leg {
+	margin-top: 0.5em;
+	font-size: 0.9em;
+}
+
+.otp-leg .alert {
+	padding: 1em;
+	margin-top: 0.5em;
+	margin-bottom: 0.5em;
+}
+
+.otp-legHeader {
+	padding: 0.5em;
+	background: #ddd;
+	cursor: pointer;
+	line-height: 1.6em;
+}
+
+.otp-legBody {
+	padding-top: .3em;
+}
+
+.otp-transitLeg-leftCol {
+    font-size: .9em;
+    color: gray;
+    width: 50px;
+    float: left;
+}
+
+.otp-transitLeg-endpointDesc {
+    font-size: .9em;
+    border-left: 1px solid #ccc;
+    margin-left: 55px;
+    padding: .0em 0 0 5px;
+    cursor: pointer;
+}
+
+.otp-transitLeg-endpointDescSub {
+    font-size: .8em;
+    border-left: 1px solid #ccc;
+    margin-left: 55px;
+    padding: .0em 0 0 5px;
+    color: gray;
+    cursor: pointer;
+}
+
+.otp-transitLeg-buffer {
+    font-size: .9em;
+    height: .9em;
+    border-left: 1px solid #ccc;
+    margin-left: 55px;
+}
+
+.otp-transitLeg-elapsedDesc {
+    font-size: .9em;
+    border-left: 1px solid #ccc;
+    color: gray;
+    margin-left: 55px;
+    padding-left: 5px;
+}
+
+.otp-legStep-row {
+    background: #e8e8e8;
+    margin-bottom: .3em;
+    padding: .3em;
+    cursor: pointer;
+}
+
+.otp-legStep-dist {
+    margin: 0px 4px 0px 8px;
+    font-size: .8em;
+    width: 25px;
+    float: right;
+    text-align: center;
+    color: gray;
+
+}
+
+.otp-legStep-text {
+    font-size: .8em;
+    margin: 0px 30px;
+}
+
+.otp-legStep-icon {
+    margin: 3px 8px 3px 4px;
+    width: 20px;
+    height: 20px;
+    float: left;
+}
+
+.otp-legStepLabel-icon {
+    width: 20px;
+    height: 20px;
+    display: inline-block;
+    vertical-align:middle;
+		background-size: 100%;
+}
+
+
+.otp-legStep-icon-LEFT {
+    background-image: url('../images/directions/left.png')
+}
+
+.otp-legStep-icon-RIGHT {
+    background-image: url('../images/directions/right.png')
+}
+
+.otp-legStep-icon-HARD_LEFT {
+    background-image: url('../images/directions/hard_left.png')
+}
+
+.otp-legStep-icon-HARD_RIGHT {
+    background-image: url('../images/directions/hard_right.png')
+}
+
+.otp-legStep-icon-SLIGHTLY_LEFT {
+    background-image: url('../images/directions/slightly_left.png')
+}
+
+.otp-legStep-icon-SLIGHTLY_RIGHT {
+    background-image: url('../images/directions/slightly_right.png')
+}
+
+.otp-legStep-icon-TURN_LEFT {
+    background-image: url('../images/directions/turn_left.png')
+}
+
+.otp-legStep-icon-TURN_RIGHT {
+    background-image: url('../images/directions/turn_right.png')
+}
+
+.otp-legStep-icon-EXIT_LEFT {
+    background-image: url('../images/directions/exit_left.png')
+}
+
+.otp-legStep-icon-EXIT_RIGHT {
+    background-image: url('../images/directions/exit_right.png')
+}
+
+.otp-legStep-icon-UTURN_LEFT {
+    background-image: url('../images/directions/uturn_left.png')
+}
+
+.otp-legStep-icon-UTURN_RIGHT {
+    background-image: url('../images/directions/uturn_right.png')
+}
+
+.otp-legStep-icon-CONTINUE {
+    background-image: url('../images/directions/continue.png')
+}
+
+.otp-legStep-icon-MERGE {
+    background-image: url('../images/directions/merge.png')
+}
+
+.otp-legStep-icon-ELEVATOR {
+    background-image: url('../images/directions/elevator.png')
+}
+
+.otp-legStep-icon-CIRCLE_CLOCKWISE {
+    background-image: url('../images/directions/circle_clockwise.png')
+}
+
+.otp-legStep-icon-CIRCLE_COUNTERCLOCKWISE {
+    background-image: url('../images/directions/circle_counterclockwise.png')
+}
+
+
+.otp-legMode-icon {
+	background: url('../images/mode/modes_hires.png') no-repeat;
+	background-size: 200px 20px;
+	display: inline-block;
+	vertical-align:middle;
+}
+
+.otp-legMode-icon-WALK {
+	background-position: 0px 0;
+	width: 15px;
+	height: 20px;
+}
+
+.otp-legMode-icon-BICYCLE {
+	background-position: -15px 0;
+	width: 23px;
+	height: 20px;
+}
+
+.otp-legMode-icon-BUS {
+	background-position: -39px 0;
+	width: 19px;
+	height: 20px;
+}
+
+.otp-legMode-icon-RAIL {
+	background-position: -60px 0;
+	width: 17px;
+	height: 20px;
+}
+
+.otp-legMode-icon-TRAM {
+	background-position: -60px 0;
+	width: 17px;
+	height: 20px;
+}
+
+.otp-legMode-icon-SUBWAY {
+	background-position: -77px 0;
+	width: 19px;
+	height: 20px;
+}
+
+.otp-legMode-icon-FERRY {
+	background-position: -97px 0;
+	width: 21px;
+	height: 20px;
+}
+
+.otp-legMode-icon-GONDOLA {
+	background-position: -119px 0;
+	width: 19px;
+	height: 20px;
+}
+
+.otp-legMode-icon-CAR {
+	background-position: -139px 0;
+	width: 19px;
+	height: 20px;
+}
+
+.otp-legMode-icon-arrow-left {
+	background-position: -162px 0px;
+	width: 10px;
+	height: 16px;
+}
+
+.otp-legMode-icon-arrow-right {
+	background-position: -176px 0px;
+	width: 10px;
+	height: 20px;
+}
+
+.agencyBranding {
+	width: 22px;
+	height: 22px;
+	background-size: contain;
+	background-repeat: no-repeat;
+	background-position: right;
+	display: inline-block;
+	float: right;
+}
+
+.otp-legMode-title {
+	display: none;
+}
+
+@media print {
+	.messageWell {
+		display: none;
+	}
+
+	.otp-legMode-title {
+		display: inline;
+	}
+
+	.PlanResponseNarrativeView,
+	.otp-itinHeader .print {
+		display: none;
+	}
+
+	.PlanResponseNarrativeView.activated {
+		display: block;
+	}
+}
