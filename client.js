@@ -1,126 +1,171 @@
-var $ = require('jquery');
-var _ = require('underscore');
+var $ = window.$
+var Backbone = window.Backbone
+var L = window.L
 
-var Backbone = require('backbone');
+// full: http://stackoverflow.com/questions/13029904/twitter-bootstrap-add-class-to-body-referring-to-its-mode
+// Assigns class to body based on the width of screen
+// This is used to move narrative from sidebar to own tab in small screens
+function assign_bootstrap_mode () {
+  var width = $(window).width()
+  var mode = ''
+  var nar = $('#narrative').detach()
+  if (width < 768) {
+    mode = 'mode-xs'
+    nar.appendTo('#plan')
+  } else if (width < 992) {
+    mode = 'mode-sm'
+    nar.appendTo('#sidebar')
+  } else {
+    mode = 'mode-md'
+    nar.appendTo('#sidebar')
+  }
 
-var OTP = require('otpjs');
-OTP.config = OTP_config;
+  $('body').removeClass('mode-md').removeClass('mode-sm').removeClass('mode-xs').addClass(mode)
+}
 
-$(document).ready(function() {
+$(document).ready(function () {
+  var OTP = require('otpjs')
+  var log = OTP.log('client')
 
-    // set up the leafet map object
-	var map = L.map('map').setView(OTP.config.initLatLng, (OTP.config.initZoom || 13));
-    map.attributionControl.setPrefix('');
+  // set up the leafet map object
+  var map = L.map('map').setView(window.OTP_config.initLatLng, (window.OTP_config.initZoom || 13))
+  map.attributionControl.setPrefix('')
 
-	// create OpenStreetMap tile layers for streets and aerial imagery
-	var osmLayer = L.tileLayer('http://{s}.tiles.mapbox.com/v3/' + OTP.config.osmMapKey + '/{z}/{x}/{y}.png', {
-        subdomains : ['a','b','c','d'],
-	    attribution: 'Street Map: <a href="http://mapbox.com/about/maps">Terms & Feedback</a>'
-	});
-    var aerialLayer = L.tileLayer('http://{s}.tiles.mapbox.com/v3/' + OTP.config.aerialMapKey + '/{z}/{x}/{y}.png', {
-        subdomains : ['a','b','c','d'],
-        attribution : 'Satellite Map: <a href="http://mapbox.com/about/maps">Terms & Feedback</a>'
-    });
+  // create OpenStreetMap tile layers for streets and aerial imagery
+  var osmLayer = L.tileLayer('//{s}.tiles.mapbox.com/v3/' + window.OTP_config
+      .osmMapKey + '/{z}/{x}/{y}{scale}.png', {
+      subdomains: ['a', 'b', 'c', 'd'],
+      attribution: 'Street Map <a href="//mapbox.com/about/maps">Terms & Feedback</a>',
+      scale: L.Browser.retina ? '@2x' : '',
+			detectRetina: true
+    })
+  var aerialLayer = L.tileLayer('//{s}.tiles.mapbox.com/v3/' + window.OTP_config
+      .aerialMapKey + '/{z}/{x}/{y}{scale}.png', {
+      subdomains: ['a', 'b', 'c', 'd'],
+      attribution: 'Satellite Map <a href="//mapbox.com/about/maps">Terms & Feedback</a>',
+      scale: L.Browser.retina ? '@2x' : '',
+			detectRetina: true
+    })
 
-    // create a leaflet layer control and add it to the map
-    var baseLayers = {
-        "Street Map" : osmLayer,
-        "Satellite Map" : aerialLayer
-    };
-    L.control.layers(baseLayers).addTo(map);
+  // create a leaflet layer control and add it to the map
+  var baseLayers = {
+    'Street Map': osmLayer,
+    'Satellite Map': aerialLayer
+  }
+  L.control.layers(baseLayers).addTo(map)
 
-    // display the OSM street layer by default
-    osmLayer.addTo(map);
+  // display the OSM street layer by default
+  osmLayer.addTo(map)
 
-    // create the trip topography widget and add it to the map
-    var topoControl = new OTP.topo_views.LeafletTopoGraphControl();
-    topoControl.addTo(map);
-    
-    // create a data model for the currently visible stops, and point it
-    // to the corresponding API method
-    var stopsRequestModel = new OTP.models.OtpStopsInRectangleRequest();
-    stopsRequestModel.urlRoot = OTP.config.otpApi + '/transit/stopsInRectangle';
+  // create a data model for the currently visible stops, and point it
+  // to the corresponding API method
+  var stopsRequestModel = new OTP.StopsInRectangleRequest()
+  stopsRequestModel.urlRoot = window.OTP_config.otpApi + 'default/index/stops'
 
-    // create the stops request view, which monitors the map and updates the
-    // bounds of the visible stops request as the viewable area changes
-    var stopsRequestMapView = new OTP.map_views.OtpStopsRequestMapView({
-        model: stopsRequestModel,
-        map: map
-    });
+  // create the stops request view, which monitors the map and updates the
+  // bounds of the visible stops request as the viewable area changes
+  new OTP.StopsRequestMapView({ // eslint-disable-line no-new
+    model: stopsRequestModel,
+    map: map
+  })
 
-    // create the stops response view, which refreshes the stop markers on the
-    // map whenever the underlying visible stops model changes
-    var stopsResponseMapView = new OTP.map_views.OtpStopsResponseMapView({
-        map: map
-    });
-    stopsRequestModel.on('success', function(response) {
-        stopsResponseMapView.newResponse(response);
-    });
+  // create the stops response view, which refreshes the stop markers on the
+  // map whenever the underlying visible stops model changes
+  var stopsResponseMapView = new OTP.StopsResponseMapView({
+    map: map
+  })
+  stopsRequestModel.on('success', function (response) {
+    stopsResponseMapView.newResponse(response)
+  })
 
-    // create the main OTP trip plan request model and point it to the API
-    var requestModel = new OTP.models.OtpPlanRequest({app_key : OTP.config.otpApiKey, app_id: OTP.config.otpAppId});
-    requestModel.urlRoot = OTP.config.otpApi + '/plan';
+  // create the main OTP trip plan request model and point it to the API
+  var requestModel = new OTP.PlanRequest({app_key: OTP_config.otpApiKey, app_id: OTP_config.otpAppId});
+  requestModel.urlRoot = window.OTP_config.otpApi + '/plan'
 
-    // create and render the main request view, which displays the trip
-    // preference form
-    var requestView = new OTP.request_views.OtpRequestFormView({
-        model: requestModel,
-        el: $('#request')
-    });
-    requestView.render();
+  // create and render the main request view, which displays the trip
+  // preference form
+  var requestView = new OTP.RequestForm({
+    model: requestModel,
+    map: map,
+    el: $('#request')
+  })
 
-    // create and render the request map view, which handles the map-specific
-    // trip request elements( e.g. the start and end markers)
-    var requestMapView = new OTP.map_views.OtpRequestMapView({
-    	model: requestModel,
-    	map: map
-    });
-    requestMapView.render();
+  // create and render the request map view, which handles the map-specific
+  // trip request elements( e.g. the start and end markers)
+  var requestMapView = new OTP.RequestMapView({
+    model: requestModel,
+    map: map
+  })
 
-    // create the main response view, which refreshes the trip narrative display
-    // and map elements as the underlying OTP response changes
-    var responseView = new OTP.views.OtpPlanResponseView({
-        narrative: $('#narrative'),
-        map: map,
-        topo: topoControl.getGraphElement()
-    });
+  // create the main response view, which refreshes the trip narrative display
+  // and map elements as the underlying OTP response changes
+  var responseView = new OTP.PlanResponseView({
+    narrative: $('#narrative'),
+    map: map
+  })
 
-    // instruct the response view to listen to relevant request model events
-    requestModel.on('success', function(response) {
-        responseView.newResponse(response); 
-    });
-    requestModel.on('failure', function(response) {
-        responseView.newResponse(false); 
-    });
+  // instruct the response view to listen to relevant request model events
 
-    requestModel.request();
+  var Router = Backbone.Router.extend({
+    routes: {
+      'start/:lat/:lon/:zoom': 'start',
+      'start/:lat/:lon/:zoom/:routerId': 'startWithRouterId',
+      'plan(?*querystring)': 'plan'
+    },
+    start: function (lat, lon, zoom) {
+      map.setView(L.latLng(lat, lon), zoom)
+    },
+    startWithRouterId: function (lat, lon, zoom, routerId) {
+      window.OTP_config.routerId = routerId
 
+      requestModel.urlRoot = window.OTP_config.otpApi + routerId + '/plan'
+      map.setView(L.latLng(lat, lon), zoom)
+    },
+    plan: function (querystring) {
+      log('loading plan from querystring')
+      requestModel.fromQueryString(querystring)
+    }
+  })
 
+  var router = new Router()
 
-    var Router = Backbone.Router.extend({
-      routes: {
-        'plan(?*querystring)': 'plan'
-      },
-      plan: function (querystring) {
-        requestModel.fromQueryString(querystring);
-      }
-    });
+  requestModel.on('change', function () {
+    log('replacing url')
+    router.navigate('plan' + requestModel.toQueryString(), { trigger: false })
+  })
+  requestModel.on('success', function (response) {
+    responseView.newResponse(null, response)
+  })
+  requestModel.on('failure', function (error) {
+    log('handling failure')
+    responseView.newResponse(error, false)
+  })
 
-    router = new Router();
-    Backbone.history.start();
+  log('rendering request views')
 
-    requestModel.on('change', function() {
-        router.navigate('plan' + requestModel.toQueryString());
-    });
+  requestMapView.render()
+  requestView.render()
 
-    // make the UI responsive to resizing of the containing window
-    var resize = function() {
-        var height = $(window).height() - 30;
-        $('#map').height(height);
-        $('#sidebar').height(height);
-        map.invalidateSize();
-    };
-    $(window).resize(resize);
-    resize.call();
-});
+  log('starting router')
 
+  Backbone.history.start()
+
+  // make the UI responsive to resizing of the containing window
+  function resize () {
+    var height = $(window).height()
+    $('#map').height(height)
+    $('#sidebar').height(height)
+    map.invalidateSize()
+    assign_bootstrap_mode()
+  }
+
+  $(document).on('shown.bs.tab', 'a.formap', function () {
+    map.invalidateSize()
+  })
+
+  $(window).resize(resize)
+  resize()
+  $('#tabs').tab()
+  map.invalidateSize()
+  assign_bootstrap_mode()
+})
