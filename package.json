@@ -13,12 +13,14 @@
   "devDependencies": {
     "component": "*",
     "component-uglifyjs": "*",
+    "gh-pages": "^0.11.0",
     "serve": "^1.4.0",
     "standard": "8.3.0"
   },
   "scripts": {
     "start": "serve client",
     "format": "standard --format lib/*.js client.js config.js index.js",
-    "lint": "standard --verbose lib/*.js client.js config.js index.js"
+    "lint": "standard --verbose lib/*.js client.js config.js index.js",
+    "gh-pages": "gh-pages -d client"
   }
 }
