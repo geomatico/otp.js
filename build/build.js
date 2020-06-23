@@ -57,7 +57,7 @@ require.helper.semVerSort = function(a, b) {
  * This function can only be used for remote dependencies.
 
  * @param {String} name - module name: `user~repo`
- * @param {Boolean} returnPath - returns the canonical require path if true, 
+ * @param {Boolean} returnPath - returns the canonical require path if true,
  *                               otherwise it returns the epxorted module
  */
 require.latest = function (name, returnPath) {
@@ -80,7 +80,7 @@ require.latest = function (name, returnPath) {
           semVerCandidates.push({version: version, name: moduleName});
         } else {
           otherCandidates.push({version: version, name: moduleName});
-        } 
+        }
     }
   }
   if (semVerCandidates.concat(otherCandidates).length === 0) {
@@ -17002,7 +17002,7 @@ var NominatimGeocoder = {\n\
     if (!query.length) return callback()\n\
 \n\
     var params = {\n\
-      countrycodes: 'us',\n\
+      countrycodes: 'es',\n\
       format: 'json',\n\
       q: query,\n\
     }\n\
