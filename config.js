@@ -7,7 +7,7 @@ window.OTP_config = {
   // mapzenApiKey: "your-key", // your Mapzen Search API key
   // geocoderSearchRadius : 25, // search radius in km for mapzen geocoder from initLatLng (defaults to 50 if not specified)
 
-  otpApi: 'http://api.tmb.cat/v1/planner/',
+  otpApi: 'https://api.tmb.cat/v1/planner/',
   otpApiKey: "c4ed3d248d10633182d9e7db6f585af1",
   otpAppId: "e32e32aa",
 
